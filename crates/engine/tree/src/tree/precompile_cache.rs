@@ -1,8 +1,9 @@
 //! Contains a precompile cache that is backed by a moka cache.
 
 use alloy_primitives::Bytes;
+use core::any::Any;
 use parking_lot::Mutex;
-use reth_evm::precompiles::{DynPrecompile, Precompile, PrecompileInput};
+use reth_evm::precompiles::{DynPrecompile, Precompile, PrecompileInput, PrecompilesMap};
 use revm::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
 use revm_primitives::Address;
 use schnellru::LruMap;
@@ -61,6 +62,17 @@ where
         let mut cache = self.0.lock();
         cache.insert(key, value);
         cache.len()
+    }
+}
+
+/// Wraps pure precompiles with caches when the EVM uses [`PrecompilesMap`].
+pub(crate) fn maybe_map_pure_precompiles<P, F>(precompiles: &mut P, f: F)
+where
+    P: Any,
+    F: FnMut(&Address, DynPrecompile) -> DynPrecompile,
+{
+    if let Some(precompiles) = (precompiles as &mut dyn Any).downcast_mut::<PrecompilesMap>() {
+        precompiles.map_pure_precompiles(f);
     }
 }
 

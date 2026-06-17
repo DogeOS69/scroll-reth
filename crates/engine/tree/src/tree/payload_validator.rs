@@ -7,7 +7,9 @@ use crate::tree::{
     instrumented_state::InstrumentedStateProvider,
     payload_processor::PayloadProcessor,
     persistence_state::CurrentPersistenceAction,
-    precompile_cache::{CachedPrecompile, CachedPrecompileMetrics, PrecompileCacheMap},
+    precompile_cache::{
+        maybe_map_pure_precompiles, CachedPrecompile, CachedPrecompileMetrics, PrecompileCacheMap,
+    },
     sparse_trie::StateRootComputeOutcome,
     ConsistentDbView, EngineApiMetrics, EngineApiTreeState, ExecutionEnv, PayloadHandle,
     PersistenceState, PersistingKind, StateProviderBuilder, StateProviderDatabase, TreeConfig,
@@ -26,7 +28,7 @@ use reth_engine_primitives::{
 use reth_errors::{BlockExecutionError, ProviderResult};
 use reth_evm::{
     block::BlockExecutor, execute::ExecutableTxFor, ConfigureEvm, EvmEnvFor, ExecutionCtxFor,
-    SpecFor,
+    PrecompilesFor, SpecFor,
 };
 use reth_payload_primitives::{
     BuiltPayload, InvalidPayloadAttributesError, NewPayloadError, PayloadTypes,
@@ -175,6 +177,7 @@ where
         + Clone
         + 'static,
     Evm: ConfigureEvm<Primitives = N> + 'static,
+    PrecompilesFor<Evm>: core::any::Any,
 {
     /// Creates a new `TreePayloadValidator`.
     #[allow(clippy::too_many_arguments)]
@@ -662,19 +665,22 @@ where
 
         if !self.config.precompile_cache_disabled() {
             // Only cache pure precompiles to avoid issues with stateful precompiles
-            executor.evm_mut().precompiles_mut().map_pure_precompiles(|address, precompile| {
-                let metrics = self
-                    .precompile_cache_metrics
-                    .entry(*address)
-                    .or_insert_with(|| CachedPrecompileMetrics::new_with_address(*address))
-                    .clone();
-                CachedPrecompile::wrap(
-                    precompile,
-                    self.precompile_cache_map.cache_for_address(*address),
-                    *env.evm_env.spec_id(),
-                    Some(metrics),
-                )
-            });
+            maybe_map_pure_precompiles(
+                executor.evm_mut().precompiles_mut(),
+                |address, precompile| {
+                    let metrics = self
+                        .precompile_cache_metrics
+                        .entry(*address)
+                        .or_insert_with(|| CachedPrecompileMetrics::new_with_address(*address))
+                        .clone();
+                    CachedPrecompile::wrap(
+                        precompile,
+                        self.precompile_cache_map.cache_for_address(*address),
+                        *env.evm_env.spec_id(),
+                        Some(metrics),
+                    )
+                },
+            );
         }
 
         let execution_start = Instant::now();

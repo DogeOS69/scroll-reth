@@ -17,7 +17,7 @@ use crate::tree::{
         executor::WorkloadExecutor, multiproof::MultiProofMessage,
         ExecutionCache as PayloadExecutionCache,
     },
-    precompile_cache::{CachedPrecompile, PrecompileCacheMap},
+    precompile_cache::{maybe_map_pure_precompiles, CachedPrecompile, PrecompileCacheMap},
     ExecutionEnv, StateProviderBuilder,
 };
 use alloy_consensus::transaction::TxHashRef;
@@ -25,7 +25,7 @@ use alloy_eips::Typed2718;
 use alloy_evm::Database;
 use alloy_primitives::{keccak256, map::B256Set, B256};
 use metrics::{Counter, Gauge, Histogram};
-use reth_evm::{execute::ExecutableTxFor, ConfigureEvm, Evm, EvmFor, SpecFor};
+use reth_evm::{execute::ExecutableTxFor, ConfigureEvm, Evm, EvmFor, PrecompilesFor, SpecFor};
 use reth_metrics::Metrics;
 use reth_primitives_traits::NodePrimitives;
 use reth_provider::{BlockReader, StateProviderFactory, StateReader};
@@ -93,6 +93,7 @@ where
     N: NodePrimitives,
     P: BlockReader + StateProviderFactory + StateReader + Clone + 'static,
     Evm: ConfigureEvm<Primitives = N> + 'static,
+    PrecompilesFor<Evm>: core::any::Any,
 {
     /// Initializes the task with the given transactions pending execution
     pub(super) fn new(
@@ -408,7 +409,7 @@ where
 
         if !precompile_cache_disabled {
             // Only cache pure precompiles to avoid issues with stateful precompiles
-            evm.precompiles_mut().map_pure_precompiles(|address, precompile| {
+            maybe_map_pure_precompiles(evm.precompiles_mut(), |address, precompile| {
                 CachedPrecompile::wrap(
                     precompile,
                     precompile_cache_map.cache_for_address(*address),

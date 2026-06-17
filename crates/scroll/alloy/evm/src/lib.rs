@@ -23,13 +23,12 @@ mod system_caller;
 
 extern crate alloc;
 
-use alloy_evm::{precompiles::PrecompilesMap, Database, Evm, EvmEnv, EvmFactory};
+use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
 use alloy_primitives::{Address, Bytes};
 use core::{
     fmt,
     ops::{Deref, DerefMut},
 };
-use alloy_evm::precompiles::DynPrecompile;
 use reth_scroll_chainspec::ScrollChainConfig;
 use revm::{
     context::{result::HaltReason, BlockEnv, TxEnv},
@@ -45,12 +44,12 @@ use revm_scroll::{
         ScrollContext,
     },
     instructions::ScrollInstructions,
-    precompile::ScrollPrecompileProvider,
     ScrollSpecId,
 };
 
 /// Re-export `TX_L1_FEE_PRECISION_U256` from `revm-scroll` for convenience.
 pub use revm_scroll::l1block::TX_L1_FEE_PRECISION_U256;
+pub use revm_scroll::precompile::ScrollPrecompileProvider;
 
 /// Scroll EVM implementation.
 #[allow(missing_debug_implementations)]
@@ -226,7 +225,7 @@ impl<P: ScrollPrecompilesFactory> EvmFactory for ScrollEvmFactory<P> {
     type HaltReason = HaltReason;
     type Spec = ScrollSpecId;
     type BlockEnv = BlockEnv;
-    type Precompiles = PrecompilesMap;
+    type Precompiles = ScrollPrecompileProvider;
 
     fn create_evm<DB: Database>(
         &self,
@@ -271,7 +270,7 @@ impl<P: ScrollPrecompilesFactory> EvmFactory for ScrollEvmFactory<P> {
 /// A factory trait for creating precompiles for Scroll EVM.
 pub trait ScrollPrecompilesFactory: Default + fmt::Debug {
     /// Creates a new instance of precompiles for the given Scroll specification ID.
-    fn with_spec(spec: ScrollSpecId, chain_config: &ScrollChainConfig) -> PrecompilesMap;
+    fn with_spec(spec: ScrollSpecId, chain_config: &ScrollChainConfig) -> ScrollPrecompileProvider;
 }
 
 /// Default implementation of the Scroll precompiles factory.
@@ -279,12 +278,15 @@ pub trait ScrollPrecompilesFactory: Default + fmt::Debug {
 pub struct ScrollDefaultPrecompilesFactory;
 
 impl ScrollPrecompilesFactory for ScrollDefaultPrecompilesFactory {
-    fn with_spec(spec_id: ScrollSpecId, chain_config: &ScrollChainConfig) -> PrecompilesMap {
+    fn with_spec(
+        spec_id: ScrollSpecId,
+        chain_config: &ScrollChainConfig,
+    ) -> ScrollPrecompileProvider {
         let mut provider = ScrollPrecompileProvider::new_with_spec(spec_id);
         if let Some(transfer_caller) = chain_config.doge_erc20_token_address {
             provider.set_transfer_caller(transfer_caller);
         }
-        
-        PrecompilesMap::from_static(provider.precompiles())
+
+        provider
     }
 }

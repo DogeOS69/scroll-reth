@@ -14,7 +14,8 @@ use reth_ethereum_engine_primitives::{
 };
 use reth_ethereum_primitives::{EthPrimitives, TransactionSigned};
 use reth_evm::{
-    eth::spec::EthExecutorSpec, ConfigureEvm, EvmFactory, EvmFactoryFor, NextBlockEnvAttributes,
+    eth::spec::EthExecutorSpec, precompiles::PrecompilesMap, ConfigureEvm, EvmFactory,
+    EvmFactoryFor, NextBlockEnvAttributes,
 };
 use reth_network::{primitives::BasicNetworkPrimitives, NetworkHandle, PeersInfo};
 use reth_node_api::{
@@ -281,7 +282,7 @@ where
     EB: EngineApiBuilder<N>,
     EVB: EngineValidatorBuilder<N>,
     EthApiError: FromEvmError<N::Evm>,
-    EvmFactoryFor<N::Evm>: EvmFactory<Tx = TxEnv>,
+    EvmFactoryFor<N::Evm>: EvmFactory<Tx = TxEnv, Precompiles = PrecompilesMap>,
     RpcMiddleware: RethRpcMiddleware,
 {
     type Handle = RpcHandle<N, EthB::EthApi>;
@@ -334,7 +335,7 @@ where
     EB: EngineApiBuilder<N>,
     EVB: EngineValidatorBuilder<N>,
     EthApiError: FromEvmError<N::Evm>,
-    EvmFactoryFor<N::Evm>: EvmFactory<Tx = TxEnv>,
+    EvmFactoryFor<N::Evm>: EvmFactory<Tx = TxEnv, Precompiles = PrecompilesMap>,
 {
     type EthApi = EthB::EthApi;
 

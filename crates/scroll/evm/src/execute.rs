@@ -54,7 +54,6 @@ mod tests {
     };
     use alloy_evm::{
         block::{BlockExecutionResult, BlockExecutor},
-        precompiles::PrecompilesMap,
         Evm,
     };
     use alloy_primitives::Sealed;
@@ -80,7 +79,8 @@ mod tests {
         compute_compressed_size, compute_compression_ratio,
         curie::{CURIE_L1_GAS_PRICE_ORACLE_BYTECODE, CURIE_L1_GAS_PRICE_ORACLE_STORAGE},
         gas_price_oracle::*,
-        ScrollBlockExecutionCtx, ScrollBlockExecutor, ScrollEvm, ScrollTxCompressionInfos,
+        ScrollBlockExecutionCtx, ScrollBlockExecutor, ScrollEvm, ScrollPrecompileProvider,
+        ScrollTxCompressionInfos,
     };
     use scroll_alloy_hardforks::{ForkCondition, ScrollHardfork, ScrollHardforks};
 
@@ -103,7 +103,7 @@ mod tests {
         block: &RecoveredBlock<ScrollBlock>,
         state: &'a mut State<EmptyDBTyped<Infallible>>,
     ) -> ScrollBlockExecutor<
-        ScrollEvm<&'a mut State<EmptyDBTyped<Infallible>>, NoOpInspector, PrecompilesMap>,
+        ScrollEvm<&'a mut State<EmptyDBTyped<Infallible>>, NoOpInspector, ScrollPrecompileProvider>,
         ScrollRethReceiptBuilder,
         Arc<ScrollChainSpec>,
     > {

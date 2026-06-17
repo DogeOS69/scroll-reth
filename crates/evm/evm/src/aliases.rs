@@ -29,6 +29,9 @@ pub type HaltReasonFor<Evm> = <EvmFactoryFor<Evm> as EvmFactory>::HaltReason;
 /// Helper to access [`EvmFactory::Tx`] for a given [`ConfigureEvm`].
 pub type TxEnvFor<Evm> = <EvmFactoryFor<Evm> as EvmFactory>::Tx;
 
+/// Helper to access [`EvmFactory::Precompiles`] for a given [`ConfigureEvm`].
+pub type PrecompilesFor<Evm> = <EvmFactoryFor<Evm> as EvmFactory>::Precompiles;
+
 /// Helper to access [`BlockExecutorFactory::ExecutionCtx`] for a given [`ConfigureEvm`].
 pub type ExecutionCtxFor<'a, Evm> =
     <<Evm as ConfigureEvm>::BlockExecutorFactory as BlockExecutorFactory>::ExecutionCtx<'a>;

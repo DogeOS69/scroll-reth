@@ -475,6 +475,7 @@ impl From<Genesis> for ScrollChainSpec {
             (ScrollHardfork::Feynman.boxed(), hard_fork_info.feynman_time),
             (ScrollHardfork::Galileo.boxed(), hard_fork_info.galileo_time),
             (ScrollHardfork::GalileoV2.boxed(), hard_fork_info.galileo_v2_time),
+            (ScrollHardfork::GalDogeOs.boxed(), hard_fork_info.galdogeos_time),
         ];
 
         let mut time_hardforks = time_hardfork_opts

@@ -7,7 +7,7 @@ use alloy_primitives::Address;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks, Hardforks, Head};
 use reth_errors::{ProviderError, RethError};
-use reth_evm::{precompiles::PrecompilesMap, ConfigureEvm, Evm};
+use reth_evm::{precompiles::PrecompilesMap, ConfigureEvm, Evm, EvmFactory, EvmFactoryFor};
 use reth_node_api::NodePrimitives;
 use reth_revm::db::EmptyDB;
 use reth_rpc_eth_types::EthApiError;
@@ -38,6 +38,7 @@ where
         + BlockReaderIdExt<Header = Header>
         + 'static,
     Evm: ConfigureEvm<Primitives: NodePrimitives<BlockHeader = Header>> + 'static,
+    EvmFactoryFor<Evm>: EvmFactory<Precompiles = PrecompilesMap>,
 {
     /// Creates a new [`EthConfigHandler`].
     pub const fn new(provider: Provider, evm_config: Evm) -> Self {
@@ -154,6 +155,7 @@ where
         + BlockReaderIdExt<Header = Header>
         + 'static,
     Evm: ConfigureEvm<Primitives: NodePrimitives<BlockHeader = Header>> + 'static,
+    EvmFactoryFor<Evm>: EvmFactory<Precompiles = PrecompilesMap>,
 {
     fn config(&self) -> RpcResult<EthConfig> {
         Ok(self.config().map_err(EthApiError::from)?)

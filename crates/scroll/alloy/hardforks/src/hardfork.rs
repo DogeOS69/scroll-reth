@@ -26,6 +26,8 @@ hardfork!(
         Galileo,
         /// GalileoV2 <https://docs.scroll.io/en/technology/overview/scroll-upgrades/galileo-upgrade/>
         GalileoV2,
+        /// GalDogeOs
+        GalDogeOs,
     }
 );
 
@@ -59,6 +61,23 @@ impl ScrollHardfork {
             (Self::Feynman, ForkCondition::Timestamp(1753167600)),
             (Self::Galileo, ForkCondition::Timestamp(1764054000)),
             (Self::GalileoV2, ForkCondition::Timestamp(1764831600)),
+        ]
+    }
+
+    /// Dogeos mainnet list of hardforks.
+    pub const fn dogeos_mainnet() -> [(Self, ForkCondition); 11] {
+        [
+            (Self::Archimedes, ForkCondition::Block(0)),
+            (Self::Bernoulli, ForkCondition::Block(0)),
+            (Self::Curie, ForkCondition::Block(0)),
+            (Self::Darwin, ForkCondition::Timestamp(0)),
+            (Self::DarwinV2, ForkCondition::Timestamp(0)),
+            (Self::Euclid, ForkCondition::Timestamp(0)),
+            (Self::EuclidV2, ForkCondition::Timestamp(0)),
+            (Self::Feynman, ForkCondition::Timestamp(0)),
+            (Self::Galileo, ForkCondition::Timestamp(0)),
+            (Self::GalileoV2, ForkCondition::Timestamp(0)),
+            (Self::GalDogeOs, ForkCondition::Timestamp(0)),
         ]
     }
 }

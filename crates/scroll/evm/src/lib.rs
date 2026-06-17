@@ -86,12 +86,13 @@ impl<
 {
     /// Creates a new [`ScrollEvmConfig`] with the given chain spec.
     pub fn new(chain_spec: Arc<ChainSpec>, receipt_builder: R) -> Self {
+        let evm_factory = ScrollEvmFactory::new(*chain_spec.chain_config());
         Self {
             block_assembler: ScrollBlockAssembler::new(chain_spec.clone()),
             executor_factory: ScrollBlockExecutorFactory::new(
                 receipt_builder,
                 chain_spec,
-                ScrollEvmFactory::default(),
+                evm_factory,
             ),
             _pd: core::marker::PhantomData,
         }
@@ -120,6 +121,11 @@ pub fn spec_id_at_timestamp_and_number(
     chain_spec: impl ScrollHardforks,
 ) -> ScrollSpecId {
     if chain_spec
+        .scroll_fork_activation(ScrollHardfork::GalDogeOs)
+        .active_at_timestamp_or_number(timestamp, number)
+    {
+        ScrollSpecId::GALDOGEOS
+    } else if chain_spec
         .scroll_fork_activation(ScrollHardfork::GalileoV2)
         .active_at_timestamp_or_number(timestamp, number) ||
         chain_spec

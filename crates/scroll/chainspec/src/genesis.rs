@@ -3,7 +3,7 @@
 use crate::{
     constants::{
         MAX_TX_PAYLOAD_BYTES_PER_BLOCK, SCROLL_FEE_VAULT_ADDRESS, SCROLL_MAINNET_L1_CONFIG,
-        SCROLL_SEPOLIA_L1_CONFIG,
+        SCROLL_SEPOLIA_L1_CONFIG, DOGEOS_MAINNET_L1_CONFIG, DOGE_ERC20_TOKEN_CONTRACT_ADDRESS
     },
     SCROLL_DEV_L1_CONFIG,
 };
@@ -73,6 +73,8 @@ pub struct ScrollHardforkInfo {
     pub galileo_time: Option<u64>,
     /// galileoV2 hardfork timestamp
     pub galileo_v2_time: Option<u64>,
+    /// galdogeos hardfork timestamp
+    pub galdogeos_time: Option<u64>,
 }
 
 impl ScrollHardforkInfo {
@@ -128,6 +130,8 @@ pub struct ScrollChainConfig {
     pub l1_config: L1Config,
     /// Whether the buffer check for L1 data fee is enabled.
     pub l1_data_fee_buffer_check: bool,
+    /// The DOGE ERC20 token address
+    pub doge_erc20_token_address: Option<Address>,
 }
 
 impl ScrollChainConfig {
@@ -144,6 +148,7 @@ impl ScrollChainConfig {
             max_tx_payload_bytes_per_block: MAX_TX_PAYLOAD_BYTES_PER_BLOCK,
             l1_config: SCROLL_MAINNET_L1_CONFIG,
             l1_data_fee_buffer_check: false,
+            doge_erc20_token_address: None,
         }
     }
 
@@ -154,6 +159,7 @@ impl ScrollChainConfig {
             max_tx_payload_bytes_per_block: MAX_TX_PAYLOAD_BYTES_PER_BLOCK,
             l1_config: SCROLL_SEPOLIA_L1_CONFIG,
             l1_data_fee_buffer_check: false,
+            doge_erc20_token_address: None,
         }
     }
 
@@ -164,6 +170,18 @@ impl ScrollChainConfig {
             max_tx_payload_bytes_per_block: MAX_TX_PAYLOAD_BYTES_PER_BLOCK,
             l1_config: SCROLL_DEV_L1_CONFIG,
             l1_data_fee_buffer_check: false,
+            doge_erc20_token_address: None,
+        }
+    }
+
+    /// Returns the [`ScrollChainConfig`] for DogeOS dev.
+    pub const fn dogeos_mainnet() -> Self {
+        Self {
+            fee_vault_address: Some(SCROLL_FEE_VAULT_ADDRESS),
+            max_tx_payload_bytes_per_block: MAX_TX_PAYLOAD_BYTES_PER_BLOCK,
+            l1_config: DOGEOS_MAINNET_L1_CONFIG,
+            l1_data_fee_buffer_check: false,
+            doge_erc20_token_address: Some(DOGE_ERC20_TOKEN_CONTRACT_ADDRESS),
         }
     }
 }
@@ -218,6 +236,7 @@ mod tests {
                 feynman_time: Some(100),
                 galileo_time: Some(110),
                 galileo_v2_time: Some(120),
+                galdogeos_time: None,
             }
         );
     }
@@ -265,6 +284,7 @@ mod tests {
                 feynman_time: Some(100),
                 galileo_time: Some(110),
                 galileo_v2_time: Some(120),
+                galdogeos_time: None,
             }),
             scroll_chain_config: ScrollChainConfig {
                 fee_vault_address: Some(address!("5300000000000000000000000000000000000005")),
@@ -280,6 +300,7 @@ mod tests {
                     num_l1_messages_per_block: 10,
                 },
                 l1_data_fee_buffer_check: false,
+                doge_erc20_token_address: None,
             },
         };
         assert_eq!(chain_info, expected);

@@ -96,3 +96,33 @@ pub static DEV_HARDFORKS: LazyLock<ChainHardforks> = LazyLock::new(|| {
         (ScrollHardfork::GalileoV2.boxed(), ForkCondition::Timestamp(0)),
     ])
 });
+
+/// Dogeos mainnet hardforks
+pub static DOGEOS_MAINNET_HARDFORKS: LazyLock<ChainHardforks> = LazyLock::new(|| {
+    ChainHardforks::new(vec![
+        (EthereumHardfork::Homestead.boxed(), ForkCondition::Block(0)),
+        (EthereumHardfork::Dao.boxed(), ForkCondition::Never),
+        (EthereumHardfork::Tangerine.boxed(), ForkCondition::Block(0)),
+        (EthereumHardfork::SpuriousDragon.boxed(), ForkCondition::Block(0)),
+        (EthereumHardfork::Byzantium.boxed(), ForkCondition::Block(0)),
+        (EthereumHardfork::Constantinople.boxed(), ForkCondition::Block(0)),
+        (EthereumHardfork::Petersburg.boxed(), ForkCondition::Block(0)),
+        (EthereumHardfork::Istanbul.boxed(), ForkCondition::Block(0)),
+        (EthereumHardfork::MuirGlacier.boxed(), ForkCondition::Never),
+        (EthereumHardfork::Berlin.boxed(), ForkCondition::Block(0)),
+        (EthereumHardfork::London.boxed(), ForkCondition::Never),
+        (EthereumHardfork::ArrowGlacier.boxed(), ForkCondition::Never),
+        (ScrollHardfork::Archimedes.boxed(), ForkCondition::Block(0)),
+        (EthereumHardfork::Shanghai.boxed(), ForkCondition::Block(0)),
+        (ScrollHardfork::Bernoulli.boxed(), ForkCondition::Block(0)),
+        (ScrollHardfork::Curie.boxed(), ForkCondition::Block(0)),
+        (ScrollHardfork::Darwin.boxed(), ForkCondition::Timestamp(0)),
+        (ScrollHardfork::DarwinV2.boxed(), ForkCondition::Timestamp(0)),
+        (ScrollHardfork::Euclid.boxed(), ForkCondition::Timestamp(0)),
+        (ScrollHardfork::EuclidV2.boxed(), ForkCondition::Timestamp(0)),
+        (ScrollHardfork::Feynman.boxed(), ForkCondition::Timestamp(0)),
+        (ScrollHardfork::Galileo.boxed(), ForkCondition::Timestamp(0)),
+        (ScrollHardfork::GalileoV2.boxed(), ForkCondition::Timestamp(0)),
+        (ScrollHardfork::GalDogeOs.boxed(), ForkCondition::Timestamp(0)),
+    ])
+});

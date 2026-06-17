@@ -120,3 +120,25 @@ pub const SCROLL_EIP1559_BASE_FEE_MAX_CHANGE_DENOMINATOR_FEYNMAN: u128 = 8;
 
 /// The scroll EIP1559 default elasticity multiplier for Feynman.
 pub const SCROLL_EIP1559_DEFAULT_ELASTICITY_MULTIPLIER_FEYNMAN: u128 = 2;
+
+// ---------------------------------- DOGEOS ----------------------------------
+
+/// The DogeOS Mainnet genesis hash
+// FIXME: update this
+pub const DOGEOS_MAINNET_GENESIS_HASH: B256 =
+    b256!("bbc05efd412b7cd47a2ed0e5ddfcf87af251e414ea4c801d78b6784513180a80");
+
+/// The DOGE ERC20 token contract on DogeOS mainnet.
+pub const DOGE_ERC20_TOKEN_CONTRACT_ADDRESS: Address =
+    address!("000000000000000000000000000000000000d09e");
+
+
+/// The L1 configuration for DogeOS mainnet.
+pub const DOGEOS_MAINNET_L1_CONFIG: L1Config = L1Config {
+    l1_chain_id: alloy_chains::NamedChain::Mainnet as u64,
+    l1_message_queue_address: SCROLL_MAINNET_L1_MESSAGE_QUEUE_ADDRESS,
+    l1_message_queue_v2_address: SCROLL_MAINNET_L1_MESSAGE_QUEUE_V2_ADDRESS,
+    l2_system_config_address: SCROLL_MAINNET_L2_SYSTEM_CONFIG_CONTRACT_ADDRESS,
+    scroll_chain_address: SCROLL_MAINNET_L1_PROXY_ADDRESS,
+    num_l1_messages_per_block: SCROLL_MAINNET_MAX_L1_MESSAGES,
+};

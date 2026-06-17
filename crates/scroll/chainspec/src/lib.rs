@@ -46,6 +46,7 @@ pub use constants::{
     SCROLL_SEPOLIA_GENESIS_HASH, SCROLL_SEPOLIA_L1_CONFIG, SCROLL_SEPOLIA_L1_MESSAGE_QUEUE_ADDRESS,
     SCROLL_SEPOLIA_L1_MESSAGE_QUEUE_V2_ADDRESS, SCROLL_SEPOLIA_L1_PROXY_ADDRESS,
     SCROLL_SEPOLIA_L2_SYSTEM_CONFIG_CONTRACT_ADDRESS, SCROLL_SEPOLIA_MAX_L1_MESSAGES,
+    DOGEOS_MAINNET_GENESIS_HASH, DOGEOS_MAINNET_L1_CONFIG, DOGE_ERC20_TOKEN_CONTRACT_ADDRESS
 };
 
 mod dev;
@@ -63,6 +64,9 @@ pub use scroll::SCROLL_MAINNET;
 
 mod scroll_sepolia;
 pub use scroll_sepolia::SCROLL_SEPOLIA;
+
+mod dogeos_mainnet;
+pub use dogeos_mainnet::DOGEOS_MAINNET;
 
 /// Chain spec builder for a Scroll chain.
 #[derive(Debug, Default, From)]
@@ -89,6 +93,16 @@ impl ScrollChainSpecBuilder {
                 .chain(SCROLL_SEPOLIA.chain)
                 .genesis(SCROLL_SEPOLIA.genesis.clone())
                 .with_forks(SCROLL_SEPOLIA.hardforks.clone()),
+        }
+    }
+
+    /// Construct a new builder from the dogeos mainnet chain spec.
+    pub fn dogeos_mainnet() -> Self {
+        Self {
+            inner: ChainSpecBuilder::default()
+                .chain(DOGEOS_MAINNET.chain)
+                .genesis(DOGEOS_MAINNET.genesis.clone())
+                .with_forks(DOGEOS_MAINNET.hardforks.clone()),
         }
     }
 }
@@ -192,6 +206,13 @@ impl ScrollChainSpecBuilder {
     pub fn galileo_v2_activated(mut self) -> Self {
         self = self.galileo_activated();
         self.inner = self.inner.with_fork(ScrollHardfork::GalileoV2, ForkCondition::Timestamp(0));
+        self
+    }
+
+    /// Enable `GalDogeOs` at genesis
+    pub fn galdogeos_activated(mut self) -> Self {
+        self = self.galileo_v2_activated();
+        self.inner = self.inner.with_fork(ScrollHardfork::GalDogeOs, ForkCondition::Timestamp(0));
         self
     }
 

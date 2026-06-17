@@ -29,6 +29,8 @@ use core::{
     fmt,
     ops::{Deref, DerefMut},
 };
+use alloy_evm::precompiles::DynPrecompile;
+use reth_scroll_chainspec::ScrollChainConfig;
 use revm::{
     context::{result::HaltReason, BlockEnv, TxEnv},
     context_interface::result::{EVMError, ResultAndState},
@@ -200,7 +202,20 @@ where
 #[derive(Debug, Default, Clone, Copy)]
 #[non_exhaustive]
 pub struct ScrollEvmFactory<P = ScrollDefaultPrecompilesFactory> {
+    chain_config: ScrollChainConfig,
     _precompiles_factory: core::marker::PhantomData<P>,
+}
+
+impl<P> ScrollEvmFactory<P> {
+    /// Creates a new [`ScrollEvmFactory`] with the given Scroll chain configuration.
+    pub const fn new(chain_config: ScrollChainConfig) -> Self {
+        Self { chain_config, _precompiles_factory: core::marker::PhantomData }
+    }
+
+    /// Returns the Scroll chain configuration used by this factory.
+    pub const fn chain_config(&self) -> &ScrollChainConfig {
+        &self.chain_config
+    }
 }
 
 impl<P: ScrollPrecompilesFactory> EvmFactory for ScrollEvmFactory<P> {
@@ -227,7 +242,7 @@ impl<P: ScrollPrecompilesFactory> EvmFactory for ScrollEvmFactory<P> {
                 .maybe_with_eip_7702()
                 .maybe_with_eip_7623()
                 .build_scroll_with_inspector(NoOpInspector {})
-                .with_precompiles(P::with_spec(spec_id)),
+                .with_precompiles(P::with_spec(spec_id, &self.chain_config)),
             inspect: false,
         }
     }
@@ -247,7 +262,7 @@ impl<P: ScrollPrecompilesFactory> EvmFactory for ScrollEvmFactory<P> {
                 .maybe_with_eip_7702()
                 .maybe_with_eip_7623()
                 .build_scroll_with_inspector(inspector)
-                .with_precompiles(P::with_spec(spec_id)),
+                .with_precompiles(P::with_spec(spec_id, &self.chain_config)),
             inspect: true,
         }
     }
@@ -256,7 +271,7 @@ impl<P: ScrollPrecompilesFactory> EvmFactory for ScrollEvmFactory<P> {
 /// A factory trait for creating precompiles for Scroll EVM.
 pub trait ScrollPrecompilesFactory: Default + fmt::Debug {
     /// Creates a new instance of precompiles for the given Scroll specification ID.
-    fn with_spec(spec: ScrollSpecId) -> PrecompilesMap;
+    fn with_spec(spec: ScrollSpecId, chain_config: &ScrollChainConfig) -> PrecompilesMap;
 }
 
 /// Default implementation of the Scroll precompiles factory.
@@ -264,7 +279,12 @@ pub trait ScrollPrecompilesFactory: Default + fmt::Debug {
 pub struct ScrollDefaultPrecompilesFactory;
 
 impl ScrollPrecompilesFactory for ScrollDefaultPrecompilesFactory {
-    fn with_spec(spec_id: ScrollSpecId) -> PrecompilesMap {
-        PrecompilesMap::from_static(ScrollPrecompileProvider::new_with_spec(spec_id).precompiles())
+    fn with_spec(spec_id: ScrollSpecId, chain_config: &ScrollChainConfig) -> PrecompilesMap {
+        let mut provider = ScrollPrecompileProvider::new_with_spec(spec_id);
+        if let Some(transfer_caller) = chain_config.doge_erc20_token_address {
+            provider.set_transfer_caller(transfer_caller);
+        }
+        
+        PrecompilesMap::from_static(provider.precompiles())
     }
 }

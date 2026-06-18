@@ -1,4 +1,4 @@
-use crate::{ScrollBuiltPayload, ScrollNode as OtherScrollNode, ScrollPayloadBuilderAttributes};
+use crate::{ScrollBuiltPayload, ScrollNode as OtherScrollNode};
 use alloy_genesis::Genesis;
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types_engine::PayloadAttributes;
@@ -6,12 +6,9 @@ use reth_e2e_test_utils::{
     transaction::TransactionTestContext, wallet::Wallet, NodeHelperType, TmpDB,
 };
 use reth_node_api::NodeTypesWithDBAdapter;
-
-use reth_payload_builder::EthPayloadBuilderAttributes;
 use reth_provider::providers::BlockchainProvider;
 use reth_scroll_chainspec::{ScrollChainConfig, ScrollChainSpecBuilder};
-use reth_tasks::TaskManager;
-use scroll_alloy_rpc_types_engine::BlockDataHint;
+use scroll_alloy_rpc_types_engine::{BlockDataHint, ScrollPayloadAttributes};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -22,10 +19,7 @@ pub(crate) type ScrollNode = NodeHelperType<
 >;
 
 /// Creates the initial setup with `num_nodes` of the node config, started and connected.
-pub async fn setup(
-    num_nodes: usize,
-    is_dev: bool,
-) -> eyre::Result<(Vec<ScrollNode>, TaskManager, Wallet)> {
+pub async fn setup(num_nodes: usize, is_dev: bool) -> eyre::Result<(Vec<ScrollNode>, Wallet)> {
     let genesis: Genesis =
         serde_json::from_str(include_str!("../tests/assets/genesis.json")).unwrap();
     reth_e2e_test_utils::setup_engine(
@@ -68,18 +62,20 @@ pub async fn advance_chain(
 }
 
 /// Helper function to create a new scroll payload attributes
-pub fn scroll_payload_attributes(timestamp: u64) -> ScrollPayloadBuilderAttributes {
+pub fn scroll_payload_attributes(timestamp: u64) -> ScrollPayloadAttributes {
     let attributes = PayloadAttributes {
         timestamp,
         prev_randao: B256::ZERO,
         suggested_fee_recipient: Address::ZERO,
         withdrawals: None,
         parent_beacon_block_root: Some(B256::ZERO),
+        slot_number: None,
+        target_gas_limit: None,
     };
 
-    ScrollPayloadBuilderAttributes {
-        payload_attributes: EthPayloadBuilderAttributes::new(B256::ZERO, attributes),
-        transactions: vec![],
+    ScrollPayloadAttributes {
+        payload_attributes: attributes,
+        transactions: Some(vec![]),
         no_tx_pool: false,
         block_data_hint: BlockDataHint::none(),
         gas_limit: None,

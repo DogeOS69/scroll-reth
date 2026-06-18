@@ -4,14 +4,52 @@ use alloc::vec::Vec;
 use std::fmt::Debug;
 
 use alloy_eips::{eip2718::Decodable2718, eip4895::Withdrawals};
-use alloy_primitives::{keccak256, Address, B256};
+#[cfg(test)]
+use alloy_primitives::keccak256;
+use alloy_primitives::{Address, B256};
+#[cfg(test)]
 use alloy_rlp::Encodable;
-use alloy_rpc_types_engine::PayloadId;
-use reth_payload_builder::EthPayloadBuilderAttributes;
-use reth_payload_primitives::PayloadBuilderAttributes;
-use reth_primitives::transaction::WithEncoded;
+use alloy_rpc_types_engine::{PayloadAttributes, PayloadId};
+use reth_primitives_traits::WithEncoded;
 use reth_scroll_primitives::ScrollTransactionSigned;
 use scroll_alloy_rpc_types_engine::{BlockDataHint, ScrollPayloadAttributes};
+
+/// Ethereum payload fields tracked by the payload builder.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct EthPayloadBuilderAttributes {
+    /// Payload id.
+    pub id: PayloadId,
+    /// Parent block hash.
+    pub parent: B256,
+    /// Payload timestamp.
+    pub timestamp: u64,
+    /// Suggested fee recipient.
+    pub suggested_fee_recipient: Address,
+    /// Previous randao value.
+    pub prev_randao: B256,
+    /// Withdrawals for the payload.
+    pub withdrawals: Withdrawals,
+    /// Parent beacon block root.
+    pub parent_beacon_block_root: Option<B256>,
+    /// Slot number for the payload.
+    pub slot_number: Option<u64>,
+}
+
+impl EthPayloadBuilderAttributes {
+    /// Creates a new instance from RPC payload attributes.
+    pub fn new(parent: B256, id: PayloadId, attributes: PayloadAttributes) -> Self {
+        Self {
+            id,
+            parent,
+            timestamp: attributes.timestamp,
+            suggested_fee_recipient: attributes.suggested_fee_recipient,
+            prev_randao: attributes.prev_randao,
+            withdrawals: attributes.withdrawals.unwrap_or_default().into(),
+            parent_beacon_block_root: attributes.parent_beacon_block_root,
+            slot_number: attributes.slot_number,
+        }
+    }
+}
 
 /// Scroll Payload Builder Attributes
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -30,17 +68,13 @@ pub struct ScrollPayloadBuilderAttributes {
     pub gas_limit: Option<u64>,
 }
 
-impl PayloadBuilderAttributes for ScrollPayloadBuilderAttributes {
-    type RpcPayloadAttributes = ScrollPayloadAttributes;
-    type Error = alloy_rlp::Error;
-
-    fn try_new(
+impl ScrollPayloadBuilderAttributes {
+    /// Creates payload builder attributes from RPC payload attributes.
+    pub fn try_new(
         parent: B256,
         attributes: ScrollPayloadAttributes,
-        version: u8,
-    ) -> Result<Self, Self::Error> {
-        let id = payload_id_scroll(&parent, &attributes, version);
-
+        id: PayloadId,
+    ) -> Result<Self, alloy_rlp::Error> {
         let transactions = attributes
             .transactions
             .unwrap_or_default()
@@ -57,15 +91,8 @@ impl PayloadBuilderAttributes for ScrollPayloadBuilderAttributes {
             })
             .collect::<Result<_, _>>()?;
 
-        let payload_attributes = EthPayloadBuilderAttributes {
-            id,
-            parent,
-            timestamp: attributes.payload_attributes.timestamp,
-            suggested_fee_recipient: attributes.payload_attributes.suggested_fee_recipient,
-            prev_randao: attributes.payload_attributes.prev_randao,
-            withdrawals: attributes.payload_attributes.withdrawals.unwrap_or_default().into(),
-            parent_beacon_block_root: attributes.payload_attributes.parent_beacon_block_root,
-        };
+        let payload_attributes =
+            EthPayloadBuilderAttributes::new(parent, id, attributes.payload_attributes);
 
         Ok(Self {
             payload_attributes,
@@ -76,31 +103,38 @@ impl PayloadBuilderAttributes for ScrollPayloadBuilderAttributes {
         })
     }
 
-    fn payload_id(&self) -> PayloadId {
+    /// Returns the payload id.
+    pub fn payload_id(&self) -> PayloadId {
         self.payload_attributes.id
     }
 
-    fn parent(&self) -> B256 {
+    /// Returns the parent hash.
+    pub fn parent(&self) -> B256 {
         self.payload_attributes.parent
     }
 
-    fn timestamp(&self) -> u64 {
+    /// Returns the payload timestamp.
+    pub fn timestamp(&self) -> u64 {
         self.payload_attributes.timestamp
     }
 
-    fn parent_beacon_block_root(&self) -> Option<B256> {
+    /// Returns the parent beacon block root.
+    pub fn parent_beacon_block_root(&self) -> Option<B256> {
         self.payload_attributes.parent_beacon_block_root
     }
 
-    fn suggested_fee_recipient(&self) -> Address {
+    /// Returns the suggested fee recipient.
+    pub fn suggested_fee_recipient(&self) -> Address {
         self.payload_attributes.suggested_fee_recipient
     }
 
-    fn prev_randao(&self) -> B256 {
+    /// Returns the previous randao value.
+    pub fn prev_randao(&self) -> B256 {
         self.payload_attributes.prev_randao
     }
 
-    fn withdrawals(&self) -> &Withdrawals {
+    /// Returns the withdrawals.
+    pub fn withdrawals(&self) -> &Withdrawals {
         &self.payload_attributes.withdrawals
     }
 }
@@ -108,6 +142,7 @@ impl PayloadBuilderAttributes for ScrollPayloadBuilderAttributes {
 /// Generates the payload id for the configured payload from the [`ScrollPayloadAttributes`].
 ///
 /// Returns an 8-byte identifier by hashing the payload components with sha256 hash.
+#[cfg(test)]
 pub(crate) fn payload_id_scroll(
     parent: &B256,
     attributes: &ScrollPayloadAttributes,

@@ -9,6 +9,8 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
 
+extern crate alloc;
+
 use once_cell as _;
 
 pub mod transaction;
@@ -18,6 +20,9 @@ use reth_primitives_traits::Block;
 
 mod receipt;
 pub use receipt::ScrollReceipt;
+
+#[cfg(feature = "reth-codec")]
+reth_codecs::impl_compression_for_compact!(ScrollReceipt);
 
 /// Scroll-specific block type.
 pub type ScrollBlock = alloy_consensus::Block<ScrollTransactionSigned>;

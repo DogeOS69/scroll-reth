@@ -1,5 +1,6 @@
 use reth_chainspec::EthChainSpec;
-use reth_node_api::{FullNodeTypes, NodeTypes};
+use reth_evm::ConfigureEvm;
+use reth_node_api::{FullNodeTypes, NodeTypes, PrimitivesTy};
 use reth_node_builder::{
     components::{PoolBuilder, PoolBuilderConfigOverrides},
     BuilderContext, TxTy,
@@ -45,45 +46,55 @@ impl<T> ScrollPoolBuilder<T> {
     }
 }
 
-impl<Node, T> PoolBuilder<Node> for ScrollPoolBuilder<T>
+impl<Node, Evm, T> PoolBuilder<Node, Evm> for ScrollPoolBuilder<T>
 where
     Node: FullNodeTypes<
         Types: NodeTypes<
             ChainSpec: EthChainSpec + ScrollHardforks + ChainConfig<Config = ScrollChainConfig>,
         >,
     >,
+    Evm: ConfigureEvm<Primitives = PrimitivesTy<Node::Types>> + Clone + 'static,
     T: EthPoolTransaction<Consensus = TxTy<Node::Types>> + ScrollTransaction,
 {
-    type Pool = ScrollTransactionPool<Node::Provider, DiskFileBlobStore, T>;
+    type Pool = ScrollTransactionPool<Node::Provider, DiskFileBlobStore, Evm, T>;
 
-    async fn build_pool(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Pool> {
+    async fn build_pool(
+        self,
+        ctx: &BuilderContext<Node>,
+        evm_config: Evm,
+    ) -> eyre::Result<Self::Pool> {
         let Self { pool_config_overrides, .. } = self;
         let data_dir = ctx.config().datadir();
         let blob_store = DiskFileBlobStore::open(data_dir.blobstore(), Default::default())?;
 
-        let validator = TransactionValidationTaskExecutor::eth_builder(ctx.provider().clone())
-            .no_eip4844()
-            .with_head_timestamp(ctx.head().timestamp)
-            .kzg_settings(ctx.kzg_settings()?)
-            .with_local_transactions_config(
-                pool_config_overrides.clone().apply(ctx.pool_config()).local_transactions_config,
-            )
-            .with_max_tx_input_bytes(ctx.chain_spec().chain_config().max_tx_payload_bytes_per_block)
-            .with_additional_tasks(
-                pool_config_overrides
-                    .additional_validation_tasks
-                    .unwrap_or_else(|| ctx.config().txpool.additional_validation_tasks),
-            )
-            .build_with_tasks(ctx.task_executor().clone(), blob_store.clone())
-            .map(|validator| {
-                ScrollTransactionValidator::new(validator)
-                    // In --dev mode we can't require gas fees because we're unable to decode
-                    // the L1 block info
-                    .require_l1_data_gas_fee(!ctx.config().dev.dev)
-                    .require_l1_data_fee_buffer(
-                        ctx.chain_spec().chain_config().l1_data_fee_buffer_check,
-                    )
-            });
+        let validator =
+            TransactionValidationTaskExecutor::eth_builder(ctx.provider().clone(), evm_config)
+                .no_eip4844()
+                .kzg_settings(ctx.kzg_settings()?)
+                .with_local_transactions_config(
+                    pool_config_overrides
+                        .clone()
+                        .apply(ctx.pool_config())
+                        .local_transactions_config,
+                )
+                .with_max_tx_input_bytes(
+                    ctx.chain_spec().chain_config().max_tx_payload_bytes_per_block,
+                )
+                .with_additional_tasks(
+                    pool_config_overrides
+                        .additional_validation_tasks
+                        .unwrap_or_else(|| ctx.config().txpool.additional_validation_tasks),
+                )
+                .build_with_tasks(ctx.task_executor().clone(), blob_store.clone())
+                .map(|validator| {
+                    ScrollTransactionValidator::new(validator)
+                        // In --dev mode we can't require gas fees because we're unable to decode
+                        // the L1 block info
+                        .require_l1_data_gas_fee(!ctx.config().dev.dev)
+                        .require_l1_data_fee_buffer(
+                            ctx.chain_spec().chain_config().l1_data_fee_buffer_check,
+                        )
+                });
 
         let transaction_pool = reth_transaction_pool::Pool::new(
             validator,
@@ -114,7 +125,7 @@ where
             );
 
             // spawn the main maintenance task
-            ctx.task_executor().spawn_critical(
+            ctx.task_executor().spawn_critical_task(
                 "txpool maintenance task",
                 reth_transaction_pool::maintain::maintain_transaction_pool_future(
                     client,

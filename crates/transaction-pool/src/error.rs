@@ -9,6 +9,30 @@ use reth_primitives_traits::transaction::error::InvalidTransactionError;
 /// Transaction pool result type.
 pub type PoolResult<T> = Result<T, PoolError>;
 
+/// Errors that can happen while recovering a raw transaction into a pool transaction.
+#[derive(Debug, thiserror::Error)]
+pub enum RawPoolTransactionError {
+    /// The raw transaction data is empty.
+    #[error("empty transaction data")]
+    EmptyRawTransactionData,
+    /// Decoding the signed transaction failed.
+    #[error("failed to decode signed transaction")]
+    FailedToDecodeSignedTransaction,
+    /// The transaction signature is invalid.
+    #[error("invalid transaction signature")]
+    InvalidTransactionSignature,
+    /// Any other error that occurred while recovering the raw pool transaction.
+    #[error(transparent)]
+    Other(#[from] Box<dyn core::error::Error + Send + Sync>),
+}
+
+impl RawPoolTransactionError {
+    /// Creates a new [`RawPoolTransactionError::Other`] variant.
+    pub fn other(error: impl Into<Box<dyn core::error::Error + Send + Sync>>) -> Self {
+        Self::Other(error.into())
+    }
+}
+
 /// A trait for additional errors that can be thrown by the transaction pool.
 ///
 /// For example during validation
@@ -145,6 +169,18 @@ impl PoolError {
             }
         }
     }
+
+    /// Returns `true` if this is a blob sidecar error that should NOT be cached as a bad import.
+    ///
+    /// The transaction hash may be valid — the issue is peer-specific (e.g. malformed sidecar
+    /// data), so we penalize the peer but allow re-fetching from other peers.
+    #[inline]
+    pub const fn is_bad_blob_sidecar(&self) -> bool {
+        match &self.kind {
+            PoolErrorKind::InvalidTransaction(err) => err.is_bad_blob_sidecar(),
+            _ => false,
+        }
+    }
 }
 
 /// Represents all errors that can happen when validating transactions for the pool for EIP-4844
@@ -182,6 +218,9 @@ pub enum Eip4844PoolTransactionError {
     /// Thrown if blob transaction has an EIP-4844 style sidecar after Osaka.
     #[error("unexpected eip-4844 sidecar after osaka")]
     UnexpectedEip4844SidecarAfterOsaka,
+    /// Thrown if blob transaction has an EIP-7594 style sidecar but EIP-7594 support is disabled.
+    #[error("eip-7594 sidecar disallowed")]
+    Eip7594SidecarDisallowed,
 }
 
 /// Represents all errors that can happen when validating transactions for the pool for EIP-7702
@@ -237,8 +276,13 @@ pub enum InvalidPoolTransactionError {
     /// Thrown if the input data of a transaction is greater
     /// than some meaningful limit a user might use. This is not a consensus error
     /// making the transaction invalid, rather a DOS protection.
-    #[error("input data too large")]
-    OversizedData(usize, usize),
+    #[error("oversized data: transaction size {size}, limit {limit}")]
+    OversizedData {
+        /// Size of the transaction/input data that exceeded the limit.
+        size: usize,
+        /// Configured limit that was exceeded.
+        limit: usize,
+    },
     /// Thrown if the transaction's fee is below the minimum fee
     #[error("transaction underpriced")]
     Underpriced,
@@ -333,9 +377,12 @@ impl InvalidPoolTransactionError {
                 // local setting
                 false
             }
-            Self::ExceedsFeeCap { max_tx_fee_wei: _, tx_fee_cap_wei: _ } => true,
+            Self::ExceedsFeeCap { max_tx_fee_wei: _, tx_fee_cap_wei: _ } => {
+                // local setting
+                false
+            }
             Self::ExceedsMaxInitCodeSize(_, _) => true,
-            Self::OversizedData(_, _) => true,
+            Self::OversizedData { .. } => true,
             Self::Underpriced => {
                 // local setting
                 false
@@ -369,7 +416,8 @@ impl InvalidPoolTransactionError {
                         true
                     }
                     Eip4844PoolTransactionError::UnexpectedEip4844SidecarAfterOsaka |
-                    Eip4844PoolTransactionError::UnexpectedEip7594SidecarBeforeOsaka => {
+                    Eip4844PoolTransactionError::UnexpectedEip7594SidecarBeforeOsaka |
+                    Eip4844PoolTransactionError::Eip7594SidecarDisallowed => {
                         // for now we do not want to penalize peers for broadcasting different
                         // sidecars
                         false
@@ -391,9 +439,44 @@ impl InvalidPoolTransactionError {
         }
     }
 
+    /// Returns `true` if this is a blob sidecar error (e.g. invalid proof, missing sidecar).
+    ///
+    /// These errors indicate the sidecar data from a specific peer was bad, but the transaction
+    /// hash itself may be valid when fetched from another peer.
+    #[inline]
+    pub const fn is_bad_blob_sidecar(&self) -> bool {
+        matches!(
+            self,
+            Self::Eip4844(
+                Eip4844PoolTransactionError::MissingEip4844BlobSidecar |
+                    Eip4844PoolTransactionError::InvalidEip4844Blob(_) |
+                    Eip4844PoolTransactionError::UnexpectedEip7594SidecarBeforeOsaka |
+                    Eip4844PoolTransactionError::UnexpectedEip4844SidecarAfterOsaka |
+                    Eip4844PoolTransactionError::Eip7594SidecarDisallowed
+            )
+        )
+    }
+
+    /// Returns true if this is a [`Self::Consensus`] variant.
+    pub const fn as_consensus(&self) -> Option<&InvalidTransactionError> {
+        match self {
+            Self::Consensus(err) => Some(err),
+            _ => None,
+        }
+    }
+
+    /// Returns true if this is [`InvalidTransactionError::NonceNotConsistent`] and the
+    /// transaction's nonce is lower than the state's.
+    pub fn is_nonce_too_low(&self) -> bool {
+        match self {
+            Self::Consensus(err) => err.is_nonce_too_low(),
+            _ => false,
+        }
+    }
+
     /// Returns `true` if an import failed due to an oversized transaction
     pub const fn is_oversized(&self) -> bool {
-        matches!(self, Self::OversizedData(_, _))
+        matches!(self, Self::OversizedData { .. })
     }
 
     /// Returns `true` if an import failed due to nonce gap.
@@ -448,5 +531,33 @@ mod tests {
         assert!(err.is_other::<E>());
 
         assert!(err.downcast_other_ref::<E>().is_some());
+    }
+
+    #[test]
+    fn bad_blob_sidecar_detection() {
+        let err = PoolError::new(
+            TxHash::ZERO,
+            InvalidPoolTransactionError::Eip4844(Eip4844PoolTransactionError::InvalidEip4844Blob(
+                BlobTransactionValidationError::InvalidProof,
+            )),
+        );
+
+        assert!(err.is_bad_blob_sidecar());
+
+        let err = PoolError::new(
+            TxHash::ZERO,
+            InvalidPoolTransactionError::Eip4844(
+                Eip4844PoolTransactionError::MissingEip4844BlobSidecar,
+            ),
+        );
+
+        assert!(err.is_bad_blob_sidecar());
+
+        let err = PoolError::new(
+            TxHash::ZERO,
+            InvalidPoolTransactionError::Eip4844(Eip4844PoolTransactionError::NoEip4844Blobs),
+        );
+
+        assert!(!err.is_bad_blob_sidecar());
     }
 }

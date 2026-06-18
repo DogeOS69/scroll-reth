@@ -7,6 +7,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
 
+extern crate alloc;
 #[cfg(not(feature = "std"))]
 extern crate alloc as std;
 
@@ -16,6 +17,9 @@ pub use transaction::{
     ScrollTransaction, ScrollTransactionInfo, ScrollTxEnvelope, ScrollTxType,
     ScrollTypedTransaction, TxL1Message, L1_MESSAGE_TRANSACTION_TYPE, L1_MESSAGE_TX_TYPE_ID,
 };
+
+#[cfg(feature = "reth-codec")]
+reth_codecs::impl_compression_for_compact!(ScrollTxEnvelope);
 
 mod receipt;
 pub use receipt::{ScrollReceiptEnvelope, ScrollReceiptWithBloom, ScrollTransactionReceipt};

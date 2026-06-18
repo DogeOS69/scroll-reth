@@ -28,6 +28,7 @@ reth-scroll-chainspec = { workspace = true, default-features = false }
 # scroll
 scroll-alloy-consensus = { workspace = true, default-features = false }
 scroll-alloy-hardforks = { workspace = true, default-features = false }
+scroll-alloy-rpc-types = { workspace = true, default-features = false, optional = true }
 
 # misc
 auto_impl = { workspace = true, default-features = false }
@@ -54,6 +55,7 @@ std = [
     "alloy-eips/std",
     "scroll-alloy-consensus/std",
     "scroll-alloy-hardforks/std",
+    "scroll-alloy-rpc-types?/std",
     "reth-evm/std",
     "reth-scroll-chainspec/std",
     "reth-scroll-evm/std",
@@ -69,5 +71,9 @@ serde = [
     "scroll-alloy-consensus/serde",
     "scroll-alloy-hardforks/serde",
     "alloy-hardforks/serde",
+]
+rpc = [
+    "alloy-evm/rpc",
+    "dep:scroll-alloy-rpc-types",
 ]
 zstd_compression = ["encoder-standard"]

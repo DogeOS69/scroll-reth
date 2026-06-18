@@ -30,7 +30,7 @@ use tokio::time::sleep;
 
 fn main() {
     Cli::<EthereumChainSpecParser, RethCliTxpoolExt>::parse()
-        .run(|builder, args| async move {
+        .run(async move |builder, args| {
             let handle = builder
                 // configure default ethereum node
                 .node(EthereumNode::default())
@@ -91,7 +91,7 @@ pub trait TxpoolExtApi {
     ) -> SubscriptionResult;
 }
 
-/// The type that implements the `txpool` rpc namespace trait
+/// The type that implements the `txpoolExt` rpc namespace trait
 pub struct TxpoolExt<Pool> {
     pool: Pool,
 }

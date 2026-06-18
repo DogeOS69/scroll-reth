@@ -11,7 +11,6 @@ use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_runner::CliContext;
 use reth_cli_util::get_secret_key;
 use reth_config::config::{HashingConfig, SenderRecoveryConfig, TransactionLookupConfig};
-use reth_db_api::database_metrics::DatabaseMetrics;
 use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder,
     headers::reverse_headers::ReverseHeadersDownloaderBuilder,
@@ -19,19 +18,20 @@ use reth_downloaders::{
 use reth_exex::ExExManagerHandle;
 use reth_network::BlockDownloaderProvider;
 use reth_network_p2p::HeadersClient;
+use reth_node_builder::common::metrics_hooks;
 use reth_node_core::{
     args::{NetworkArgs, StageEnum},
     version::version_metadata,
 };
 use reth_node_metrics::{
     chain::ChainSpecInfo,
-    hooks::Hooks,
     server::{MetricServer, MetricServerConfig},
     version::VersionInfo,
 };
+use reth_primitives_traits::FastInstant as Instant;
 use reth_provider::{
     ChainSpecProvider, DBProvider, DatabaseProviderFactory, StageCheckpointReader,
-    StageCheckpointWriter, StaticFileProviderFactory,
+    StageCheckpointWriter,
 };
 use reth_stages::{
     stages::{
@@ -41,7 +41,7 @@ use reth_stages::{
     },
     ExecInput, ExecOutput, ExecutionStageThresholds, Stage, StageExt, UnwindInput, UnwindOutput,
 };
-use std::{any::Any, net::SocketAddr, sync::Arc, time::Instant};
+use std::{any::Any, net::SocketAddr, sync::Arc};
 use tokio::sync::watch;
 use tracing::*;
 
@@ -84,6 +84,9 @@ pub struct Command<C: ChainSpecParser> {
     /// Commits the changes in the database. WARNING: potentially destructive.
     ///
     /// Useful when you want to run diagnostics on the database.
+    ///
+    /// NOTE: This flag is currently required for the headers, bodies, and execution stages because
+    /// they use static files and must commit to properly unwind and run.
     // TODO: We should consider allowing to run hooks at the end of the stage run,
     // e.g. query the DB size, or any table data.
     #[arg(long, short)]
@@ -105,18 +108,26 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
         Comp: CliNodeComponents<N>,
         F: FnOnce(Arc<C::ChainSpec>) -> Comp,
     {
+        // Quit early if the stage requires a commit and `--commit` is not provided.
+        if self.requires_commit() && !self.commit {
+            return Err(eyre::eyre!(
+                "The stage {} requires overwriting existing static files and must commit, but `--commit` was not provided. Please pass `--commit` and try again.",
+                self.stage.to_string()
+            ));
+        }
+
         // Raise the fd limit of the process.
         // Does not do anything on windows.
         let _ = fdlimit::raise_fd_limit();
 
+        let runtime = ctx.task_executor.clone();
         let Environment { provider_factory, config, data_dir } =
-            self.env.init::<N>(AccessRights::RW)?;
+            self.env.init::<N>(AccessRights::RW, ctx.task_executor.clone())?;
 
         let mut provider_rw = provider_factory.database_provider_rw()?;
         let components = components(provider_factory.chain_spec());
 
         if let Some(listen_addr) = self.metrics {
-            info!(target: "reth::cli", "Starting metrics endpoint at {}", listen_addr);
             let config = MetricServerConfig::new(
                 listen_addr,
                 VersionInfo {
@@ -129,20 +140,8 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
                 },
                 ChainSpecInfo { name: provider_factory.chain_spec().chain().to_string() },
                 ctx.task_executor,
-                Hooks::builder()
-                    .with_hook({
-                        let db = provider_factory.db_ref().clone();
-                        move || db.report_metrics()
-                    })
-                    .with_hook({
-                        let sfp = provider_factory.static_file_provider();
-                        move || {
-                            if let Err(error) = sfp.report_metrics() {
-                                error!(%error, "Failed to report metrics from static file provider");
-                            }
-                        }
-                    })
-                    .build(),
+                metrics_hooks(&provider_factory),
+                data_dir.pprof_dumps(),
             );
 
             MetricServer::new(config).serve().await?;
@@ -151,7 +150,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
         let batch_size = self.batch_size.unwrap_or(self.to.saturating_sub(self.from) + 1);
 
         let etl_config = config.stages.etl.clone();
-        let prune_modes = config.prune.clone().map(|prune| prune.segments).unwrap_or_default();
+        let prune_modes = config.prune.segments.clone();
 
         let (mut exec_stage, mut unwind_stage): (Box<dyn Stage<_>>, Option<Box<dyn Stage<_>>>) =
             match self.stage {
@@ -174,6 +173,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
                             provider_factory.chain_spec(),
                             p2p_secret_key,
                             default_peers_path,
+                            runtime.clone(),
                         )
                         .build(provider_factory.clone())
                         .start_network()
@@ -210,7 +210,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
                     let consensus = Arc::new(components.consensus().clone());
 
                     let mut config = config;
-                    config.peers.trusted_nodes_only = self.network.trusted_only;
+                    config.peers.trusted_nodes_only |= self.network.trusted_only;
                     config.peers.trusted_nodes.extend(self.network.trusted_peers.clone());
 
                     let network_secret_path = self
@@ -229,6 +229,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
                             provider_factory.chain_spec(),
                             p2p_secret_key,
                             default_peers_path,
+                            runtime.clone(),
                         )
                         .build(provider_factory.clone())
                         .start_network()
@@ -251,9 +252,10 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
                     (Box::new(stage), None)
                 }
                 StageEnum::Senders => (
-                    Box::new(SenderRecoveryStage::new(SenderRecoveryConfig {
-                        commit_threshold: batch_size,
-                    })),
+                    Box::new(SenderRecoveryStage::new(
+                        SenderRecoveryConfig { commit_threshold: batch_size },
+                        None,
+                    )),
                     None,
                 ),
                 StageEnum::Execution => (
@@ -281,29 +283,33 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
                 ),
                 StageEnum::AccountHashing => (
                     Box::new(AccountHashingStage::new(
-                        HashingConfig { clean_threshold: 1, commit_threshold: batch_size },
+                        HashingConfig {
+                            clean_threshold: 1,
+                            commit_threshold: batch_size,
+                            commit_entries: u64::MAX,
+                        },
                         etl_config,
                     )),
                     None,
                 ),
                 StageEnum::StorageHashing => (
                     Box::new(StorageHashingStage::new(
-                        HashingConfig { clean_threshold: 1, commit_threshold: batch_size },
+                        HashingConfig {
+                            clean_threshold: 1,
+                            commit_threshold: batch_size,
+                            commit_entries: u64::MAX,
+                        },
                         etl_config,
                     )),
                     None,
                 ),
-                StageEnum::Merkle => {
-                    let consensus = Arc::new(components.consensus().clone());
-                    (
-                        Box::new(MerkleStage::<N::Primitives>::new_execution(
-                            config.stages.merkle.rebuild_threshold,
-                            config.stages.merkle.incremental_threshold,
-                            consensus.clone(),
-                        )),
-                        Some(Box::new(MerkleStage::<N::Primitives>::new_unwind(consensus))),
-                    )
-                }
+                StageEnum::Merkle => (
+                    Box::new(MerkleStage::new_execution(
+                        config.stages.merkle.rebuild_threshold,
+                        config.stages.merkle.incremental_threshold,
+                    )),
+                    Some(Box::new(MerkleStage::default_unwind())),
+                ),
                 StageEnum::AccountHistory => (
                     Box::new(IndexAccountHistoryStage::new(
                         config.stages.index_account_history,
@@ -387,5 +393,14 @@ impl<C: ChainSpecParser> Command<C> {
     /// Returns the underlying chain being used to run this command
     pub fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
         Some(&self.env.chain)
+    }
+
+    /// Returns whether or not the configured stage requires committing.
+    ///
+    /// This is the case for stages that mainly modify static files, as there is no way to unwind
+    /// these stages without committing anyways. This is because static files do not have
+    /// transactions and we cannot change the view of headers without writing.
+    pub fn requires_commit(&self) -> bool {
+        matches!(self.stage, StageEnum::Headers | StageEnum::Bodies | StageEnum::Execution)
     }
 }

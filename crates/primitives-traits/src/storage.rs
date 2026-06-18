@@ -1,5 +1,14 @@
 use alloy_primitives::{B256, U256};
 
+/// A database value that can expose its duplicate-sort subkey.
+pub trait ValueWithSubKey {
+    /// The subkey type used by the duplicate-sort table.
+    type SubKey;
+
+    /// Returns the duplicate-sort subkey for this value.
+    fn get_subkey(&self) -> Self::SubKey;
+}
+
 /// Account storage entry.
 ///
 /// `key` is the subkey when used as a value in the `StorageChangeSets` table.
@@ -18,6 +27,14 @@ impl StorageEntry {
     /// Create a new `StorageEntry` with given key and value.
     pub const fn new(key: B256, value: U256) -> Self {
         Self { key, value }
+    }
+}
+
+impl ValueWithSubKey for StorageEntry {
+    type SubKey = B256;
+
+    fn get_subkey(&self) -> Self::SubKey {
+        self.key
     }
 }
 
@@ -47,3 +64,6 @@ impl reth_codecs::Compact for StorageEntry {
         (Self { key, value }, out)
     }
 }
+
+#[cfg(feature = "reth-codec")]
+reth_codecs::impl_compression_for_compact!(StorageEntry);

@@ -19,6 +19,7 @@ alloy-consensus.workspace = true
 alloy-primitives = { workspace = true, features = ["rlp"] }
 
 # misc
+bytes = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["display"] }
 serde_with = { workspace = true, optional = true }
 
@@ -60,6 +61,7 @@ std = [
     "derive_more/std",
     "serde_json/std",
     "serde_with?/std",
+    "bytes?/std",
 ]
 k256 = [
     "alloy-primitives/k256",
@@ -71,8 +73,10 @@ kzg = [
     "std",
 ]
 reth-codec = [
+    "dep:bytes",
     "dep:reth-codecs",
     "dep:reth-codecs-derive",
+    "reth-codecs/alloy",
     "modular-bitfield",
     "std",
 ]
@@ -94,6 +98,7 @@ serde = [
     "alloy-eips/serde",
     "rand/serde",
     "reth-codecs?/serde",
+    "bytes?/serde",
 ]
 serde-bincode-compat = [
     "dep:serde_with",

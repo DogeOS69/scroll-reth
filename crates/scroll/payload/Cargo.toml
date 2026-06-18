@@ -20,6 +20,7 @@ alloy-primitives.workspace = true
 # scroll-alloy
 reth-scroll-evm.workspace = true
 scroll-alloy-hardforks.workspace = true
+scroll-alloy-rpc-types-engine.workspace = true
 
 # revm
 revm.workspace = true

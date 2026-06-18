@@ -15,6 +15,7 @@ workspace = true
 scroll-alloy-consensus = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, default-features = false }
 alloy-eips = { workspace = true, features = ["serde"], default-features = false }
+alloy-network = { workspace = true, default-features = false }
 alloy-network-primitives = { workspace = true, default-features = false }
 alloy-primitives = { workspace = true, features = ["map", "rlp", "serde"], default-features = false }
 alloy-rpc-types-eth = { workspace = true, features = ["serde"], default-features = false }

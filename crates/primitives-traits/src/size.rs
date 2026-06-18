@@ -1,7 +1,8 @@
 use alloc::vec::Vec;
 use alloy_consensus::{
-    transaction::TxEip4844Sidecar, EthereumTxEnvelope, Header, TxEip1559, TxEip2930, TxEip4844,
-    TxEip4844Variant, TxEip4844WithSidecar, TxEip7702, TxLegacy, TxType,
+    transaction::TxEip4844Sidecar, EthereumReceipt, EthereumTxEnvelope, Header, TxEip1559,
+    TxEip2930, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxEip7702, TxLegacy, TxTy,
+    TxType,
 };
 use alloy_eips::eip4895::Withdrawals;
 use alloy_primitives::{LogData, Signature, TxHash, B256};
@@ -75,6 +76,12 @@ impl InMemorySize for alloy_consensus::Receipt {
         core::mem::size_of_val(status) +
             core::mem::size_of_val(cumulative_gas_used) +
             logs.iter().map(|log| log.size()).sum::<usize>()
+    }
+}
+
+impl<T: TxTy> InMemorySize for EthereumReceipt<T> {
+    fn size(&self) -> usize {
+        <Self as alloy_consensus::InMemorySize>::size(self)
     }
 }
 
@@ -156,6 +163,7 @@ mod op {
                 Self::Eip1559(tx) => tx.size(),
                 Self::Eip7702(tx) => tx.size(),
                 Self::Deposit(tx) => tx.size(),
+                Self::PostExec(tx) => tx.size(),
             }
         }
     }
@@ -179,6 +187,7 @@ mod op {
                 Self::Eip1559(tx) => tx.size(),
                 Self::Eip7702(tx) => tx.size(),
                 Self::Deposit(tx) => tx.size(),
+                Self::PostExec(tx) => tx.size(),
             }
         }
     }

@@ -1,12 +1,10 @@
 //! Feynman fork transition for Scroll.
 
-use alloc::vec;
 use revm::{
     bytecode::Bytecode,
-    database::{states::StorageSlot, State},
-    primitives::{bytes, Bytes, U256},
-    state::AccountInfo,
-    Database,
+    primitives::{bytes, AddressMap, Bytes, U256},
+    state::{Account, AccountInfo, EvmStorageSlot, TransactionId},
+    Database, DatabaseCommit,
 };
 
 // Import L1GasPriceOracle address and slots.
@@ -33,8 +31,8 @@ const FEYNMAN_L1_GAS_PRICE_ORACLE_STORAGE: [(U256, U256); 3] = [
 ///    - Updates the L1 oracle contract bytecode to reflect the DA cost reduction.
 ///    - Sets the initial compression penalty threshold and penalty factor values.
 ///    - Sets the `isFeynman` slot to 1 (true).
-pub(super) fn apply_feynman_hard_fork<DB: Database>(
-    state: &mut State<DB>,
+pub(super) fn apply_feynman_hard_fork<DB: Database + DatabaseCommit>(
+    state: &mut DB,
 ) -> Result<(), DB::Error> {
     // No-op if already applied.
     // Note: This requires a storage read for every Feynman block, and it means this
@@ -45,14 +43,12 @@ pub(super) fn apply_feynman_hard_fork<DB: Database>(
         return Ok(())
     }
 
-    let oracle = state.load_cache_account(L1_GAS_PRICE_ORACLE_ADDRESS)?;
-
     // compute the code hash
     let bytecode = Bytecode::new_raw(FEYNMAN_L1_GAS_PRICE_ORACLE_BYTECODE);
     let code_hash = bytecode.hash_slow();
 
     // get the old oracle account info
-    let old_oracle_info = oracle.account_info().unwrap_or_default();
+    let old_oracle_info = state.basic(L1_GAS_PRICE_ORACLE_ADDRESS)?.unwrap_or_default();
 
     // init new oracle account information
     let new_oracle_info = AccountInfo { code_hash, code: Some(bytecode), ..old_oracle_info };
@@ -61,23 +57,22 @@ pub(super) fn apply_feynman_hard_fork<DB: Database>(
     let new_storage = FEYNMAN_L1_GAS_PRICE_ORACLE_STORAGE
         .into_iter()
         .map(|(slot, present_value)| {
-            (
+            let original_value = state.storage(L1_GAS_PRICE_ORACLE_ADDRESS, slot)?;
+            Ok((
                 slot,
-                StorageSlot {
-                    present_value,
-                    previous_or_original_value: oracle.storage_slot(slot).unwrap_or_default(),
-                },
-            )
+                EvmStorageSlot::new_changed(original_value, present_value, TransactionId::ZERO),
+            ))
         })
-        .collect();
+        .collect::<Result<_, DB::Error>>()?;
 
-    // create transition for oracle new account info and storage
-    let transition = oracle.change(new_oracle_info, new_storage);
+    let mut oracle_account = Account::default();
+    oracle_account.info = new_oracle_info;
+    oracle_account.storage = new_storage;
+    oracle_account.mark_touch();
 
-    // add transition
-    if let Some(s) = state.transition_state.as_mut() {
-        s.add_transitions(vec![(L1_GAS_PRICE_ORACLE_ADDRESS, transition)])
-    }
+    let mut changes = AddressMap::default();
+    changes.insert(L1_GAS_PRICE_ORACLE_ADDRESS, oracle_account);
+    state.commit(changes);
 
     Ok(())
 }

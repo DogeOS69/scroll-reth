@@ -13,6 +13,9 @@ extern crate alloc;
 
 // Re-export used error types.
 pub use reth_storage_errors as errors;
+mod bal;
+pub use bal::*;
+
 mod account;
 pub use account::*;
 
@@ -88,7 +91,9 @@ pub use base_fee::*;
 mod block_indices;
 pub use block_indices::*;
 
+#[cfg(feature = "std")]
 mod block_writer;
+#[cfg(feature = "std")]
 pub use block_writer::*;
 
 mod state_writer;
@@ -97,5 +102,16 @@ pub use state_writer::*;
 mod header_sync_gap;
 pub use header_sync_gap::HeaderSyncGapProvider;
 
+#[cfg(feature = "db-api")]
+pub mod metadata;
+#[cfg(all(feature = "db-api", feature = "std"))]
+pub use metadata::StoragePath;
+#[cfg(feature = "db-api")]
+pub use metadata::{MetadataProvider, MetadataWriter, StorageSettingsCache};
+#[cfg(feature = "db-api")]
+pub use reth_db_api::models::StorageSettings;
+
 mod full;
 pub use full::*;
+
+pub mod macros;

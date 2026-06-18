@@ -1,6 +1,12 @@
 use alloy_consensus::crypto::secp256k1::recover_signer;
-use alloy_eips::{Encodable2718, Typed2718};
-use alloy_evm::{FromRecoveredTx, FromTxWithEncoded, IntoTxEnv};
+use alloy_eips::{eip2930::AccessList, Encodable2718, Typed2718};
+#[cfg(feature = "rpc")]
+use alloy_evm::{
+    env::BlockEnvironment,
+    rpc::{EthTxEnvError, TryIntoTxEnv},
+    EvmEnv,
+};
+use alloy_evm::{FromRecoveredTx, FromTxWithEncoded, IntoTxEnv, TransactionEnvMut};
 use alloy_primitives::{Address, Bytes, TxKind, B256, U256};
 use core::ops::{Deref, DerefMut};
 use revm::context::{
@@ -8,6 +14,8 @@ use revm::context::{
     transaction::{RecoveredAuthority, RecoveredAuthorization},
     Transaction, TxEnv,
 };
+#[cfg(feature = "rpc")]
+use revm_scroll::l1block::TX_L1_FEE_PRECISION_U256;
 use revm_scroll::ScrollTransaction;
 use scroll_alloy_consensus::{ScrollTxEnvelope, TxL1Message, L1_MESSAGE_TRANSACTION_TYPE};
 
@@ -66,6 +74,41 @@ impl<T: Transaction> DerefMut for ScrollTransactionIntoTxEnv<T> {
 impl<T: Transaction> IntoTxEnv<Self> for ScrollTransactionIntoTxEnv<T> {
     fn into_tx_env(self) -> Self {
         self
+    }
+}
+
+impl<T: TransactionEnvMut> TransactionEnvMut for ScrollTransactionIntoTxEnv<T> {
+    fn set_gas_limit(&mut self, gas_limit: u64) {
+        self.base.set_gas_limit(gas_limit);
+    }
+
+    fn set_nonce(&mut self, nonce: u64) {
+        self.base.set_nonce(nonce);
+    }
+
+    fn set_access_list(&mut self, access_list: AccessList) {
+        self.base.set_access_list(access_list);
+    }
+}
+
+#[cfg(feature = "rpc")]
+impl<Spec, Block> TryIntoTxEnv<ScrollTransactionIntoTxEnv<TxEnv>, Spec, Block>
+    for scroll_alloy_rpc_types::ScrollTransactionRequest
+where
+    Block: BlockEnvironment,
+{
+    type Err = EthTxEnvError;
+
+    fn try_into_tx_env(
+        self,
+        evm_env: &EvmEnv<Spec, Block>,
+    ) -> Result<ScrollTransactionIntoTxEnv<TxEnv>, Self::Err> {
+        Ok(ScrollTransactionIntoTxEnv::new(
+            self.as_ref().clone().try_into_tx_env(evm_env)?,
+            Some(Bytes::new()),
+            Some(TX_L1_FEE_PRECISION_U256),
+            Some(0),
+        ))
     }
 }
 

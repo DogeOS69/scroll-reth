@@ -30,7 +30,7 @@ use core::{
     ops::{Deref, DerefMut},
 };
 use revm::{
-    context::{result::HaltReason, BlockEnv, TxEnv},
+    context::{result::HaltReason, BlockEnv, CfgEnv, DBErrorMarker, TxEnv},
     context_interface::result::{EVMError, ResultAndState},
     handler::PrecompileProvider,
     inspector::NoOpInspector,
@@ -122,6 +122,10 @@ where
         &self.block
     }
 
+    fn cfg_env(&self) -> &CfgEnv<Self::Spec> {
+        &self.cfg
+    }
+
     fn chain_id(&self) -> u64 {
         self.cfg.chain_id
     }
@@ -207,7 +211,7 @@ impl<P: ScrollPrecompilesFactory> EvmFactory for ScrollEvmFactory<P> {
     type Evm<DB: Database, I: Inspector<ScrollContext<DB>>> = ScrollEvm<DB, I, Self::Precompiles>;
     type Context<DB: Database> = ScrollContext<DB>;
     type Tx = ScrollTransactionIntoTxEnv<TxEnv>;
-    type Error<DBError: core::error::Error + Send + Sync + 'static> = EVMError<DBError>;
+    type Error<DBError: DBErrorMarker> = EVMError<DBError>;
     type HaltReason = HaltReason;
     type Spec = ScrollSpecId;
     type BlockEnv = BlockEnv;

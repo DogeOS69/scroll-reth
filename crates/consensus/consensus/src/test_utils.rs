@@ -1,4 +1,4 @@
-use crate::{Consensus, ConsensusError, FullConsensus, HeaderValidator};
+use crate::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
 use alloy_primitives::B256;
 use core::sync::atomic::{AtomicBool, Ordering};
 use reth_execution_types::BlockExecutionResult;
@@ -54,6 +54,8 @@ impl<N: NodePrimitives> FullConsensus<N> for TestConsensus {
         &self,
         _block: &RecoveredBlock<N::Block>,
         _result: &BlockExecutionResult<N::Receipt>,
+        _receipt_root_bloom: Option<ReceiptRootBloom>,
+        _block_access_list_hash: Option<B256>,
     ) -> Result<(), ConsensusError> {
         if self.fail_validation() {
             Err(ConsensusError::BaseFeeMissing)
@@ -64,13 +66,11 @@ impl<N: NodePrimitives> FullConsensus<N> for TestConsensus {
 }
 
 impl<B: Block> Consensus<B> for TestConsensus {
-    type Error = ConsensusError;
-
     fn validate_body_against_header(
         &self,
         _body: &B::Body,
         _header: &SealedHeader<B::Header>,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<(), ConsensusError> {
         if self.fail_body_against_header() {
             Err(ConsensusError::BaseFeeMissing)
         } else {
@@ -78,7 +78,7 @@ impl<B: Block> Consensus<B> for TestConsensus {
         }
     }
 
-    fn validate_block_pre_execution(&self, _block: &SealedBlock<B>) -> Result<(), Self::Error> {
+    fn validate_block_pre_execution(&self, _block: &SealedBlock<B>) -> Result<(), ConsensusError> {
         if self.fail_validation() {
             Err(ConsensusError::BaseFeeMissing)
         } else {

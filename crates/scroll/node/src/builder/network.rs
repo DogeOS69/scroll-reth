@@ -2,6 +2,7 @@ use reth_eth_wire_types::BasicNetworkPrimitives;
 use reth_network::{
     config::NetworkMode,
     protocol::{RlpxSubProtocol, RlpxSubProtocols},
+    transactions::{config::AnnouncementAcceptance, AnnouncementFilteringPolicy},
     NetworkConfig, NetworkHandle, NetworkManager, PeersInfo,
 };
 use reth_node_api::TxTy;
@@ -11,6 +12,7 @@ use reth_scroll_chainspec::ScrollChainSpec;
 use reth_scroll_primitives::ScrollPrimitives;
 use reth_tracing::tracing::info;
 use reth_transaction_pool::{PoolTransaction, TransactionPool};
+use scroll_alloy_consensus::{ScrollPooledTransaction, ScrollTxType};
 use std::fmt::Debug;
 /// The network builder for Scroll.
 #[derive(Debug, Default)]
@@ -60,7 +62,14 @@ where
         };
 
         let network = NetworkManager::builder(config).await?;
-        let handle = ctx.start_network(network, pool, None);
+        let handle = ctx.start_network_with_policies(
+            network,
+            pool,
+            ctx.config().network.transactions_manager_config(),
+            ctx.config().network.tx_propagation_policy,
+            ScrollAnnouncementFilter,
+            None,
+        );
         info!(target: "reth::cli", enode=%handle.local_node_record(), "P2P networking initialized");
         Ok(handle)
     }
@@ -68,4 +77,23 @@ where
 
 /// Network primitive types used by Scroll networks.
 pub type ScrollNetworkPrimitives =
-    BasicNetworkPrimitives<ScrollPrimitives, scroll_alloy_consensus::ScrollPooledTransaction>;
+    BasicNetworkPrimitives<ScrollPrimitives, ScrollPooledTransaction>;
+
+/// Announcement filter that accepts Scroll transaction type bytes.
+#[derive(Debug, Clone, Copy, Default)]
+struct ScrollAnnouncementFilter;
+
+impl AnnouncementFilteringPolicy<ScrollNetworkPrimitives> for ScrollAnnouncementFilter {
+    fn decide_on_announcement(
+        &self,
+        ty: u8,
+        _hash: &alloy_primitives::B256,
+        _size: usize,
+    ) -> AnnouncementAcceptance {
+        if ScrollTxType::try_from(ty).is_ok() {
+            AnnouncementAcceptance::Accept
+        } else {
+            AnnouncementAcceptance::Reject { penalize_peer: true }
+        }
+    }
+}

@@ -3,7 +3,7 @@ use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{BlockHash, BlockNumber, Sealable, B256};
 use async_compression::tokio::bufread::GzipDecoder;
 use futures::Future;
-use itertools::Either;
+use itertools::{Either, Itertools};
 use reth_consensus::{Consensus, ConsensusError};
 use reth_network_p2p::{
     bodies::client::{BodiesClient, BodiesFut},
@@ -83,10 +83,32 @@ impl From<&'static str> for FileClientError {
 }
 
 impl<B: FullBlock> FileClient<B> {
+    /// Create a new file client from a slice of sealed blocks.
+    pub fn from_blocks(blocks: impl IntoIterator<Item = SealedBlock<B>>) -> Self {
+        let blocks: Vec<_> = blocks.into_iter().collect();
+        let capacity = blocks.len();
+
+        let mut headers = HashMap::with_capacity(capacity);
+        let mut hash_to_number = HashMap::with_capacity(capacity);
+        let mut bodies = HashMap::with_capacity(capacity);
+
+        for block in blocks {
+            let number = block.number();
+            let hash = block.hash();
+            let (header, body) = block.split_sealed_header_body();
+
+            headers.insert(number, header.into_header());
+            hash_to_number.insert(hash, number);
+            bodies.insert(hash, body);
+        }
+
+        Self { headers, hash_to_number, bodies }
+    }
+
     /// Create a new file client from a file path.
     pub async fn new<P: AsRef<Path>>(
         path: P,
-        consensus: Arc<dyn Consensus<B, Error = ConsensusError>>,
+        consensus: Arc<dyn Consensus<B>>,
     ) -> Result<Self, FileClientError> {
         let file = File::open(path).await?;
         Self::from_file(file, consensus).await
@@ -95,7 +117,7 @@ impl<B: FullBlock> FileClient<B> {
     /// Initialize the [`FileClient`] with a file directly.
     pub(crate) async fn from_file(
         mut file: File,
-        consensus: Arc<dyn Consensus<B, Error = ConsensusError>>,
+        consensus: Arc<dyn Consensus<B>>,
     ) -> Result<Self, FileClientError> {
         // get file len from metadata before reading
         let metadata = file.metadata().await?;
@@ -104,7 +126,7 @@ impl<B: FullBlock> FileClient<B> {
         let mut reader = vec![];
         file.read_to_end(&mut reader).await?;
 
-        Ok(FileClientBuilder { consensus, parent_header: None }
+        Ok(FileClientBuilder { consensus, parent_header: None, skip_invalid_blocks: false }
             .build(&reader[..], file_len)
             .await?
             .file_client)
@@ -141,17 +163,9 @@ impl<B: FullBlock> FileClient<B> {
         if self.headers.is_empty() {
             return true
         }
-        let mut nums = self.headers.keys().copied().collect::<Vec<_>>();
-        nums.sort_unstable();
-        let mut iter = nums.into_iter();
-        let mut lowest = iter.next().expect("not empty");
-        for next in iter {
-            if next != lowest + 1 {
-                return false
-            }
-            lowest = next;
-        }
-        true
+        let (min, max) = self.headers.keys().minmax().into_option().expect("not empty");
+        // Contiguous range from min to max means no gaps
+        *max - *min + 1 == self.headers.len() as u64
     }
 
     /// Use the provided bodies as the file client's block body buffer.
@@ -200,8 +214,9 @@ impl<B: FullBlock> FileClient<B> {
 }
 
 struct FileClientBuilder<B: Block> {
-    pub consensus: Arc<dyn Consensus<B, Error = ConsensusError>>,
+    pub consensus: Arc<dyn Consensus<B>>,
     pub parent_header: Option<SealedHeader<B::Header>>,
+    pub skip_invalid_blocks: bool,
 }
 
 impl<B: FullBlock<Header: reth_primitives_traits::BlockHeader>> FromReader
@@ -258,15 +273,33 @@ impl<B: FullBlock<Header: reth_primitives_traits::BlockHeader>> FromReader
 
                 let block = SealedBlock::seal_slow(block);
 
-                // Validate standalone header
-                self.consensus.validate_header(block.sealed_header())?;
-                if let Some(parent) = &parent_header {
-                    self.consensus.validate_header_against_parent(block.sealed_header(), parent)?;
+                // Run consensus pre-checks. An invalid block here (e.g. mid-file in a
+                // BlockchainTest sequence that intentionally interleaves invalid block proposals
+                // with the valid chain) is not a hard failure: skip the block and keep decoding
+                // so the pipeline can still apply the valid prefix.
+                let validation =
+                    self.consensus.validate_header(block.sealed_header()).and_then(|_| {
+                        if let Some(parent) = &parent_header {
+                            self.consensus
+                                .validate_header_against_parent(block.sealed_header(), parent)?;
+                        }
+                        self.consensus.validate_block_pre_execution(&block)
+                    });
+                if let Err(err) = validation {
+                    if !self.skip_invalid_blocks {
+                        return Err(err.into())
+                    }
+                    warn!(target: "downloaders::file",
+                        block_number = block.number(),
+                        block_hash = %block.hash(),
+                        %err,
+                        "skipping invalid block while decoding file"
+                    );
+                    continue
+                }
+                if parent_header.is_some() {
                     parent_header = Some(block.sealed_header().clone());
                 }
-
-                // Validate block against header
-                self.consensus.validate_block_pre_execution(&block)?;
 
                 // add to the internal maps
                 let block_hash = block.hash();
@@ -481,18 +514,16 @@ impl FileReader {
         chunk: &mut Vec<u8>,
         chunk_byte_len: u64,
     ) -> Result<bool, FileClientError> {
+        let mut buffer = vec![0u8; 64 * 1024];
         loop {
             if chunk.len() >= chunk_byte_len as usize {
                 return Ok(true)
             }
 
-            let mut buffer = vec![0u8; 64 * 1024];
-
             match self.read(&mut buffer).await {
                 Ok(0) => return Ok(!chunk.is_empty()),
                 Ok(n) => {
-                    buffer.truncate(n);
-                    chunk.extend_from_slice(&buffer);
+                    chunk.extend_from_slice(&buffer[..n]);
                 }
                 Err(e) => return Err(e.into()),
             }
@@ -564,14 +595,24 @@ impl ChunkedFileReader {
     /// are available before processing. For plain files, it uses the original chunking logic.
     pub async fn next_chunk<B: FullBlock>(
         &mut self,
-        consensus: Arc<dyn Consensus<B, Error = ConsensusError>>,
+        consensus: Arc<dyn Consensus<B>>,
         parent_header: Option<SealedHeader<B::Header>>,
+    ) -> Result<Option<FileClient<B>>, FileClientError> {
+        self.next_chunk_with_invalid_block_handling(consensus, parent_header, false).await
+    }
+
+    /// Read next chunk from file, optionally skipping blocks that fail consensus pre-checks.
+    pub async fn next_chunk_with_invalid_block_handling<B: FullBlock>(
+        &mut self,
+        consensus: Arc<dyn Consensus<B>>,
+        parent_header: Option<SealedHeader<B::Header>>,
+        skip_invalid_blocks: bool,
     ) -> Result<Option<FileClient<B>>, FileClientError> {
         let Some(chunk_len) = self.read_next_chunk().await? else { return Ok(None) };
 
         // make new file client from chunk
         let DecodedFileChunk { file_client, remaining_bytes, .. } =
-            FileClientBuilder { consensus, parent_header }
+            FileClientBuilder { consensus, parent_header, skip_invalid_blocks }
                 .build(&self.chunk[..], chunk_len)
                 .await?;
 
@@ -656,7 +697,7 @@ mod tests {
     use async_compression::tokio::write::GzipEncoder;
     use futures_util::stream::StreamExt;
     use rand::Rng;
-    use reth_consensus::{noop::NoopConsensus, test_utils::TestConsensus};
+    use reth_consensus::{noop::NoopConsensus, test_utils::TestConsensus, ConsensusError};
     use reth_ethereum_primitives::Block;
     use reth_network_p2p::{
         bodies::downloader::BodyDownloader,
@@ -684,7 +725,7 @@ mod tests {
             FileClient::from_file(file.into(), NoopConsensus::arc())
                 .await
                 .unwrap()
-                .with_bodies(bodies.clone()),
+                .with_bodies(bodies.clone().into_iter().collect()),
         );
         let mut downloader = BodiesDownloaderBuilder::default().build::<Block, _, _>(
             client.clone(),
@@ -728,7 +769,7 @@ mod tests {
         downloader.update_sync_target(SyncTarget::Tip(p0.hash()));
 
         let headers = downloader.next().await.unwrap();
-        assert_eq!(headers, Ok(vec![p0, p1, p2]));
+        assert_eq!(headers.unwrap(), vec![p0, p1, p2]);
         assert!(downloader.next().await.is_none());
         assert!(downloader.next().await.is_none());
     }
@@ -786,6 +827,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn strict_chunk_decode_fails_on_invalid_block() {
+        let (file, _, _) = generate_bodies_file(0..=2).await;
+        let chunk_byte_len = file.metadata().await.unwrap().len();
+        let mut reader = ChunkedFileReader::from_file(file, chunk_byte_len, false).await.unwrap();
+        let consensus = Arc::new(TestConsensus::default());
+        consensus.set_fail_validation(true);
+
+        let err = reader.next_chunk::<Block>(consensus, None).await.unwrap_err();
+
+        assert_matches!(err, FileClientError::Consensus(ConsensusError::BaseFeeMissing));
+    }
+
+    #[tokio::test]
+    async fn lenient_chunk_decode_skips_invalid_blocks() {
+        let (file, _, _) = generate_bodies_file(0..=2).await;
+        let chunk_byte_len = file.metadata().await.unwrap().len();
+        let mut reader = ChunkedFileReader::from_file(file, chunk_byte_len, false).await.unwrap();
+        let consensus = Arc::new(TestConsensus::default());
+        consensus.set_fail_validation(true);
+
+        let client = reader
+            .next_chunk_with_invalid_block_handling::<Block>(consensus, None, true)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(client.headers_len(), 0);
+        assert!(client.tip().is_none());
+    }
+
+    #[tokio::test]
     async fn test_chunk_download_headers_from_file() {
         reth_tracing::init_test_tracing();
 
@@ -815,7 +887,7 @@ mod tests {
 
             // construct headers downloader and use first header
             let mut header_downloader = ReverseHeadersDownloaderBuilder::default()
-                .build(Arc::clone(&Arc::new(client)), Arc::new(TestConsensus::default()));
+                .build(Arc::new(client), Arc::new(TestConsensus::default()));
             header_downloader.update_local_head(local_header.clone());
             header_downloader.update_sync_target(SyncTarget::Tip(sync_target_hash));
 
@@ -890,7 +962,7 @@ mod tests {
 
             // construct headers downloader and use first header
             let mut header_downloader = ReverseHeadersDownloaderBuilder::default()
-                .build(Arc::clone(&Arc::new(client)), Arc::new(TestConsensus::default()));
+                .build(Arc::new(client), Arc::new(TestConsensus::default()));
             header_downloader.update_local_head(local_header.clone());
             header_downloader.update_sync_target(SyncTarget::Tip(sync_target_hash));
 

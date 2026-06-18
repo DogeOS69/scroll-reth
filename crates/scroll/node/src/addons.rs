@@ -246,6 +246,7 @@ impl<NetworkT, RpcMiddleWare> ScrollAddOnsBuilder<NetworkT, RpcMiddleWare> {
                 BasicEngineApiBuilder::default(),
                 BasicEngineValidatorBuilder::default(),
                 rpc_middleware,
+                Identity::new(),
             ),
         }
     }

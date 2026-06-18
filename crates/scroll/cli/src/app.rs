@@ -8,7 +8,7 @@ use reth_scroll_chainspec::ScrollChainSpec;
 use reth_scroll_consensus::ScrollBeaconConsensus;
 use reth_scroll_evm::ScrollExecutorProvider;
 use reth_scroll_node::ScrollNode;
-use reth_tracing::{FileWorkerGuard, Layers};
+use reth_tracing::{Layers, TracingGuards};
 use std::{fmt, sync::Arc};
 use tracing::info;
 
@@ -18,7 +18,7 @@ pub struct CliApp<Spec: ChainSpecParser, Ext: clap::Args + fmt::Debug> {
     cli: Cli<Spec, Ext>,
     runner: Option<CliRunner>,
     layers: Option<Layers>,
-    guard: Option<FileWorkerGuard>,
+    guard: Option<TracingGuards>,
 }
 
 impl<C, Ext> CliApp<C, Ext>
@@ -73,29 +73,32 @@ where
                 Arc::new(ScrollBeaconConsensus::new(spec)),
             )
         };
+        let rt = runner.runtime();
 
         match self.cli.command {
             Commands::Node(command) => {
                 runner.run_command_until_exit(|ctx| command.execute(ctx, launcher))
             }
             Commands::Import(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<ScrollNode, _>(components))
+                runner.run_blocking_until_ctrl_c(command.execute::<ScrollNode, _>(components, rt))
             }
             Commands::Init(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<ScrollNode>())
+                runner.run_blocking_until_ctrl_c(command.execute::<ScrollNode>(rt))
             }
             Commands::InitState(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<ScrollNode>())
+                runner.run_blocking_until_ctrl_c(command.execute::<ScrollNode>(rt))
             }
             Commands::DumpGenesis(command) => runner.run_blocking_until_ctrl_c(command.execute()),
             Commands::Db(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<ScrollNode>())
+                runner.run_blocking_command_until_exit(|ctx| command.execute::<ScrollNode>(ctx))
             }
             Commands::Stage(command) => runner
                 .run_command_until_exit(|ctx| command.execute::<ScrollNode, _>(ctx, components)),
             Commands::P2P(command) => runner.run_until_ctrl_c(command.execute::<ScrollNode>()),
             Commands::Config(command) => runner.run_until_ctrl_c(command.execute()),
-            Commands::Prune(command) => runner.run_until_ctrl_c(command.execute::<ScrollNode>()),
+            Commands::Prune(command) => {
+                runner.run_command_until_exit(|ctx| command.execute::<ScrollNode>(ctx))
+            }
             #[cfg(feature = "dev")]
             Commands::TestVectors(command) => runner.run_until_ctrl_c(command.execute()),
         }
@@ -107,7 +110,7 @@ where
     pub fn init_tracing(&mut self) -> Result<()> {
         if self.guard.is_none() {
             let layers = self.layers.take().unwrap_or_default();
-            self.guard = self.cli.logs.init_tracing_with_layers(layers)?;
+            self.guard = Some(self.cli.logs.init_tracing_with_layers(layers, false)?);
             info!(target: "reth::cli", "Initialized tracing, debug log directory: {}", self.cli.logs.log_file_directory);
         }
         Ok(())

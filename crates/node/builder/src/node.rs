@@ -45,6 +45,11 @@ pub trait Node<N: FullNodeTypes>: NodeTypes + Clone {
 
     /// Returns the node add-ons.
     fn add_ons(&self) -> Self::AddOns;
+
+    /// Returns the stages that should be disabled for this node.
+    fn disabled_stages() -> &'static [reth_stages::StageId] {
+        &[]
+    }
 }
 
 /// A [`Node`] type builder
@@ -191,7 +196,9 @@ where
     /// Returns the [`EngineApiClient`] interface for the authenticated engine API.
     ///
     /// This will send authenticated ws requests to the node's auth server.
-    pub async fn engine_ws_client(&self) -> impl EngineApiClient<Engine> {
+    pub async fn engine_ws_client(
+        &self,
+    ) -> impl EngineApiClient<Engine> + use<Engine, Node, AddOns> {
         self.auth_server_handle().ws_client().await
     }
 
@@ -199,7 +206,9 @@ where
     ///
     /// This will send not authenticated IPC requests to the node's auth server.
     #[cfg(unix)]
-    pub async fn engine_ipc_client(&self) -> Option<impl EngineApiClient<Engine>> {
+    pub async fn engine_ipc_client(
+        &self,
+    ) -> Option<impl EngineApiClient<Engine> + use<Engine, Node, AddOns>> {
         self.auth_server_handle().ipc_client().await
     }
 }
@@ -219,9 +228,9 @@ impl<Node: FullNodeComponents, AddOns: NodeAddOns<Node>> DerefMut for FullNode<N
 }
 
 /// Helper type alias to define [`FullNode`] for a given [`Node`].
-pub type FullNodeFor<N, DB = Arc<DatabaseEnv>> =
+pub type FullNodeFor<N, DB = DatabaseEnv> =
     FullNode<NodeAdapter<RethFullAdapter<DB, N>>, <N as Node<RethFullAdapter<DB, N>>>::AddOns>;
 
 /// Helper type alias to define [`NodeHandle`] for a given [`Node`].
-pub type NodeHandleFor<N, DB = Arc<DatabaseEnv>> =
+pub type NodeHandleFor<N, DB = DatabaseEnv> =
     NodeHandle<NodeAdapter<RethFullAdapter<DB, N>>, <N as Node<RethFullAdapter<DB, N>>>::AddOns>;

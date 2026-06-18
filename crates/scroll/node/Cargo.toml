@@ -108,6 +108,7 @@ test-utils = [
     "reth-db/test-utils",
     "reth-revm/test-utils",
     "reth-scroll-node/test-utils",
+    "reth-tasks?/test-utils",
 ]
 scroll-alloy-traits = [
     "reth-db/scroll-alloy-traits",
@@ -116,4 +117,9 @@ scroll-alloy-traits = [
     "reth-scroll-node/scroll-alloy-traits",
     "reth-engine-local/scroll-alloy-traits",
 ]
-js-tracer = ["reth-scroll-rpc/js-tracer"]
+js-tracer = [
+    "reth-scroll-rpc/js-tracer",
+    "reth-node-builder/js-tracer",
+    "reth-rpc-eth-types/js-tracer",
+    "reth-scroll-node/js-tracer",
+]

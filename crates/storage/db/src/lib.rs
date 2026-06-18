@@ -43,11 +43,8 @@ pub mod test_utils {
     use super::*;
     use crate::mdbx::DatabaseArguments;
     use parking_lot::RwLock;
-    use reth_db_api::{
-        database::Database, database_metrics::DatabaseMetrics, models::ClientVersion,
-    };
+    use reth_db_api::{database::Database, database_metrics::DatabaseMetrics};
     use reth_fs_util;
-    use reth_libmdbx::MaxReadTransactionDuration;
     use std::{
         fmt::Formatter,
         path::{Path, PathBuf},
@@ -144,6 +141,18 @@ pub mod test_utils {
         fn tx_mut(&self) -> Result<Self::TXMut, DatabaseError> {
             self.db().tx_mut()
         }
+
+        fn path(&self) -> std::path::PathBuf {
+            self.db().path()
+        }
+
+        fn oldest_reader_txnid(&self) -> Option<u64> {
+            self.db().oldest_reader_txnid()
+        }
+
+        fn last_txnid(&self) -> Option<u64> {
+            self.db().last_txnid()
+        }
     }
 
     impl<DB: DatabaseMetrics> DatabaseMetrics for TempDatabase<DB> {
@@ -160,6 +169,14 @@ pub mod test_utils {
         (temp_dir, path)
     }
 
+    /// Create `rocksdb` path for testing
+    #[track_caller]
+    pub fn create_test_rocksdb_dir() -> (TempDir, PathBuf) {
+        let temp_dir = TempDir::with_prefix("reth-test-rocksdb-").expect(ERROR_TEMPDIR);
+        let path = temp_dir.path().to_path_buf();
+        (temp_dir, path)
+    }
+
     /// Get a temporary directory path to use for the database
     pub fn tempdir_path() -> PathBuf {
         let builder = tempfile::Builder::new().prefix("reth-test-").rand_bytes(8).tempdir();
@@ -172,12 +189,7 @@ pub mod test_utils {
         let path = tempdir_path();
         let emsg = format!("{ERROR_DB_CREATION}: {path:?}");
 
-        let db = init_db(
-            &path,
-            DatabaseArguments::new(ClientVersion::default())
-                .with_max_read_transaction_duration(Some(MaxReadTransactionDuration::Unbounded)),
-        )
-        .expect(&emsg);
+        let db = init_db(&path, DatabaseArguments::test()).expect(&emsg);
 
         Arc::new(TempDatabase::new(db, path))
     }
@@ -186,27 +198,59 @@ pub mod test_utils {
     #[track_caller]
     pub fn create_test_rw_db_with_path<P: AsRef<Path>>(path: P) -> Arc<TempDatabase<DatabaseEnv>> {
         let path = path.as_ref().to_path_buf();
-        let db = init_db(
-            path.as_path(),
-            DatabaseArguments::new(ClientVersion::default())
-                .with_max_read_transaction_duration(Some(MaxReadTransactionDuration::Unbounded)),
-        )
-        .expect(ERROR_DB_CREATION);
+        let emsg = format!("{ERROR_DB_CREATION}: {path:?}");
+        let db = init_db(path.as_path(), DatabaseArguments::test()).expect(&emsg);
         Arc::new(TempDatabase::new(db, path))
+    }
+
+    /// Create read/write database for testing within a data directory.
+    ///
+    /// The database is created at `datadir/db`, and `TempDatabase` will clean up the entire
+    /// `datadir` on drop.
+    #[track_caller]
+    pub fn create_test_rw_db_with_datadir<P: AsRef<Path>>(
+        datadir: P,
+    ) -> Arc<TempDatabase<DatabaseEnv>> {
+        let datadir = datadir.as_ref().to_path_buf();
+        let db_path = datadir.join("db");
+        let emsg = format!("{ERROR_DB_CREATION}: {db_path:?}");
+        let db = init_db(&db_path, DatabaseArguments::test()).expect(&emsg);
+        Arc::new(TempDatabase::new(db, datadir))
     }
 
     /// Create read only database for testing
     #[track_caller]
     pub fn create_test_ro_db() -> Arc<TempDatabase<DatabaseEnv>> {
-        let args = DatabaseArguments::new(ClientVersion::default())
-            .with_max_read_transaction_duration(Some(MaxReadTransactionDuration::Unbounded));
+        let args = DatabaseArguments::test();
 
         let path = tempdir_path();
+        let emsg = format!("{ERROR_DB_CREATION}: {path:?}");
         {
-            init_db(path.as_path(), args.clone()).expect(ERROR_DB_CREATION);
+            init_db(path.as_path(), args.clone()).expect(&emsg);
         }
         let db = open_db_read_only(path.as_path(), args).expect(ERROR_DB_OPEN);
         Arc::new(TempDatabase::new(db, path))
+    }
+
+    /// Enables MDBX legacy multi-open mode, allowing the same database to be opened
+    /// multiple times within a single process. This is needed for tests that simulate
+    /// concurrent primary + read-only secondary provider scenarios.
+    ///
+    /// Must be called before any MDBX environment is opened.
+    ///
+    /// # Safety
+    ///
+    /// This uses `MDBX_DBG_LEGACY_MULTIOPEN` which recovers POSIX file locks on close.
+    /// It may cause unexpected pauses and does not perfectly mirror multi-process behavior.
+    /// Use only in tests.
+    pub fn enable_legacy_multiopen() {
+        unsafe {
+            reth_libmdbx::ffi::mdbx_setup_debug(
+                reth_libmdbx::ffi::MDBX_LOG_DONTCHANGE,
+                reth_libmdbx::ffi::MDBX_DBG_LEGACY_MULTIOPEN as reth_libmdbx::ffi::MDBX_debug_flags,
+                None,
+            );
+        }
     }
 }
 
@@ -225,6 +269,24 @@ mod tests {
     use reth_libmdbx::MaxReadTransactionDuration;
     use std::time::Duration;
     use tempfile::tempdir;
+
+    #[test]
+    fn test_temp_database_cleanup() {
+        // Test that TempDatabase properly cleans up its directory when dropped
+        let temp_path = {
+            let db = crate::test_utils::create_test_rw_db();
+            let path = db.path();
+            assert!(path.exists(), "Database directory should exist while TempDatabase is alive");
+            path
+            // TempDatabase dropped here
+        };
+
+        // Verify the directory was cleaned up
+        assert!(
+            !temp_path.exists(),
+            "Database directory should be cleaned up after TempDatabase is dropped"
+        );
+    }
 
     #[test]
     fn db_version() {

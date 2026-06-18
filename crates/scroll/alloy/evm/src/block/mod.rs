@@ -10,7 +10,6 @@ use crate::{
         curie::apply_curie_hard_fork, feynman::apply_feynman_hard_fork,
         galileo_v2::apply_galileo_v2_hard_fork,
     },
-    gas_price_oracle::L1_GAS_PRICE_ORACLE_ADDRESS,
     system_caller::ScrollSystemCaller,
     FromTxWithCompressionInfo, ScrollDefaultPrecompilesFactory, ScrollEvm, ScrollEvmFactory,
     ScrollPrecompilesFactory, ScrollTransactionIntoTxEnv, ToTxWithCompressionInfo,
@@ -22,9 +21,9 @@ use alloy_eips::Encodable2718;
 use alloy_evm::{
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockExecutorFactory,
-        BlockExecutorFor, BlockValidationError, ExecutableTx, OnStateHook,
+        BlockValidationError, ExecutableTx, GasOutput, StateDB, TxResult,
     },
-    Database, Evm, EvmFactory, FromRecoveredTx, FromTxWithEncoded,
+    Database, Evm, EvmFactory, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
 };
 use alloy_primitives::{B256, U256};
 use reth_scroll_chainspec::{ChainConfig, ScrollChainConfig};
@@ -33,7 +32,6 @@ use revm::{
         result::{InvalidTransaction, ResultAndState},
         Block, TxEnv,
     },
-    database::State,
     handler::PrecompileProvider,
     interpreter::InterpreterResult,
     DatabaseCommit, Inspector,
@@ -101,16 +99,43 @@ where
     }
 }
 
-impl<'db, DB, E, R, Spec> ScrollBlockExecutor<E, R, Spec>
+/// The result of executing a Scroll transaction.
+#[derive(Debug)]
+pub struct ScrollTxResult<H, T> {
+    /// Result of the transaction execution.
+    pub result: ResultAndState<H>,
+    /// Executed transaction.
+    pub tx: T,
+    /// L1 data fee paid by the transaction.
+    pub l1_fee: U256,
+}
+
+impl<H, T> TxResult for ScrollTxResult<H, T>
 where
-    DB: Database + 'db,
+    H: Send + 'static,
+    T: Send + 'static,
+{
+    type HaltReason = H;
+
+    fn result(&self) -> &ResultAndState<Self::HaltReason> {
+        &self.result
+    }
+
+    fn into_result(self) -> ResultAndState<Self::HaltReason> {
+        self.result
+    }
+}
+
+impl<E, R, Spec> ScrollBlockExecutor<E, R, Spec>
+where
     E: EvmExt<
-        DB = &'db mut State<DB>,
+        DB: StateDB,
         Tx: FromRecoveredTx<R::Transaction>
                 + FromTxWithEncoded<R::Transaction>
                 + FromTxWithCompressionInfo<R::Transaction>,
     >,
     R: ScrollReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
+    R::Transaction: Clone,
     Spec: ScrollHardforks + ChainConfig<Config = ScrollChainConfig>,
 {
     /// Executes all transactions in a block, applying pre and post execution changes. The provided
@@ -140,33 +165,19 @@ where
     }
 }
 
-impl<'db, DB, E, R, Spec> BlockExecutor for ScrollBlockExecutor<E, R, Spec>
+impl<E, R, Spec> BlockExecutor for ScrollBlockExecutor<E, R, Spec>
 where
-    DB: Database + 'db,
-    E: EvmExt<
-        DB = &'db mut State<DB>,
-        Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction>,
-    >,
+    E: EvmExt<DB: StateDB, Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction>>,
     R: ScrollReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
+    R::Transaction: Clone,
     Spec: ScrollHardforks + ChainConfig<Config = ScrollChainConfig>,
 {
     type Transaction = R::Transaction;
     type Receipt = R::Receipt;
     type Evm = E;
+    type Result = ScrollTxResult<E::HaltReason, R::Transaction>;
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
-        // set state clear flag if the block is after the Spurious Dragon hardfork.
-        let state_clear_flag =
-            self.spec.is_spurious_dragon_active_at_block(self.evm.block().number().to());
-        self.evm.db_mut().set_state_clear_flag(state_clear_flag);
-
-        // load the l1 gas oracle contract in cache.
-        let _ = self
-            .evm
-            .db_mut()
-            .load_cache_account(L1_GAS_PRICE_ORACLE_ADDRESS)
-            .map_err(BlockExecutionError::other)?;
-
         // apply gas oracle predeploy upgrade at Curie transition block.
         #[allow(clippy::collapsible_if)]
         if self
@@ -218,7 +229,8 @@ where
     fn execute_transaction_without_commit(
         &mut self,
         tx: impl ExecutableTx<Self>,
-    ) -> Result<ResultAndState<<Self::Evm as Evm>::HaltReason>, BlockExecutionError> {
+    ) -> Result<Self::Result, BlockExecutionError> {
+        let (tx_env, tx) = tx.into_parts();
         let chain_spec = &self.spec;
         let is_l1_message = tx.tx().ty() == L1_MESSAGE_TRANSACTION_TYPE;
         // The sum of the transaction’s gas limit and the gas utilized in this block prior,
@@ -273,16 +285,8 @@ where
         self.evm.with_l1_data_fee_buffer_check(chain_spec.chain_config().l1_data_fee_buffer_check);
 
         // execute and return the result.
-        self.evm.transact(&tx).map_err(move |err| BlockExecutionError::evm(err, hash))
-    }
-
-    fn commit_transaction(
-        &mut self,
-        output: ResultAndState<<Self::Evm as Evm>::HaltReason>,
-        tx: impl ExecutableTx<Self>,
-    ) -> Result<u64, BlockExecutionError> {
-        let ResultAndState { result, state } = output;
-        let is_l1_message = tx.tx().ty() == L1_MESSAGE_TRANSACTION_TYPE;
+        let result =
+            self.evm.transact(tx_env).map_err(move |err| BlockExecutionError::evm(err, hash))?;
 
         let l1_fee = if is_l1_message {
             U256::ZERO
@@ -291,11 +295,17 @@ where
             self.evm.l1_fee().expect("l1 fee loaded")
         };
 
-        let gas_used = result.gas_used();
+        Ok(ScrollTxResult { result, tx: tx.tx().clone(), l1_fee })
+    }
+
+    fn commit_transaction(&mut self, output: Self::Result) -> GasOutput {
+        let ScrollTxResult { result: ResultAndState { result, state }, tx, l1_fee } = output;
+
+        let gas_used = result.gas().tx_gas_used();
         self.gas_used += gas_used;
 
         let ctx = ReceiptBuilderCtx::<'_, Self::Transaction, E> {
-            tx: tx.tx(),
+            tx: &tx,
             result,
             cumulative_gas_used: self.gas_used,
             l1_fee,
@@ -304,7 +314,7 @@ where
 
         self.evm.db_mut().commit(state);
 
-        Ok(gas_used)
+        GasOutput::new(gas_used)
     }
 
     fn finish(self) -> Result<(Self::Evm, BlockExecutionResult<R::Receipt>), BlockExecutionError> {
@@ -319,14 +329,16 @@ where
         ))
     }
 
-    fn set_state_hook(&mut self, _hook: Option<Box<dyn OnStateHook>>) {}
-
     fn evm_mut(&mut self) -> &mut Self::Evm {
         &mut self.evm
     }
 
     fn evm(&self) -> &Self::Evm {
         &self.evm
+    }
+
+    fn receipts(&self) -> &[Self::Receipt] {
+        &self.receipts
     }
 }
 
@@ -411,6 +423,7 @@ impl<R, Spec, P> ScrollBlockExecutorFactory<R, Spec, P> {
 impl<R, Spec, P> BlockExecutorFactory for ScrollBlockExecutorFactory<R, Spec, P>
 where
     R: ScrollReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
+    R::Transaction: Clone,
     Spec: ScrollHardforks + ChainConfig<Config = ScrollChainConfig> + Clone,
     P: ScrollPrecompilesFactory,
     ScrollTransactionIntoTxEnv<TxEnv>:
@@ -421,6 +434,10 @@ where
     type ExecutionCtx<'a> = ScrollBlockExecutionCtx;
     type Transaction = R::Transaction;
     type Receipt = R::Receipt;
+    type TxExecutionResult =
+        ScrollTxResult<<Self::EvmFactory as EvmFactory>::HaltReason, R::Transaction>;
+    type Executor<'a, DB: StateDB, I: Inspector<<Self::EvmFactory as EvmFactory>::Context<DB>>> =
+        ScrollBlockExecutor<<Self::EvmFactory as EvmFactory>::Evm<DB, I>, &'a R, Spec>;
 
     fn evm_factory(&self) -> &Self::EvmFactory {
         &self.evm_factory
@@ -428,12 +445,12 @@ where
 
     fn create_executor<'a, DB, I>(
         &'a self,
-        evm: <Self::EvmFactory as EvmFactory>::Evm<&'a mut State<DB>, I>,
+        evm: <Self::EvmFactory as EvmFactory>::Evm<DB, I>,
         ctx: Self::ExecutionCtx<'a>,
-    ) -> impl BlockExecutorFor<'a, Self, DB, I>
+    ) -> Self::Executor<'a, DB, I>
     where
-        DB: Database + 'a,
-        I: Inspector<<Self::EvmFactory as EvmFactory>::Context<&'a mut State<DB>>> + 'a,
+        DB: StateDB,
+        I: Inspector<<Self::EvmFactory as EvmFactory>::Context<DB>>,
     {
         ScrollBlockExecutor::new(evm, ctx, self.spec.clone(), &self.receipt_builder)
     }

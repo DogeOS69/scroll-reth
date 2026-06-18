@@ -6,7 +6,7 @@ use alloc::{sync::Arc, vec::Vec};
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumberOrTag};
 use alloy_primitives::{BlockNumber, TxNumber, B256};
 use core::ops::RangeInclusive;
-use reth_primitives_traits::{RecoveredBlock, SealedHeader};
+use reth_primitives_traits::{Block as _, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock};
 use reth_storage_errors::provider::ProviderResult;
 
 /// A helper enum that represents the origin of the requested block.
@@ -54,7 +54,6 @@ pub trait BlockReader:
     + TransactionsProvider
     + ReceiptProvider
     + Send
-    + Sync
 {
     /// The block type this provider reads.
     type Block: reth_primitives_traits::Block<
@@ -72,6 +71,24 @@ pub trait BlockReader:
         hash: B256,
         source: BlockSource,
     ) -> ProviderResult<Option<Self::Block>>;
+
+    /// Tries to find a sealed or recovered block in the given block source.
+    ///
+    /// This allows providers with in-memory recovered blocks to return a shared recovered block
+    /// without cloning the entire block body.
+    ///
+    /// Note: this only operates on the hash because the number might be ambiguous.
+    ///
+    /// Returns `None` if block is not found.
+    fn find_sealed_or_recovered_block(
+        &self,
+        hash: B256,
+        source: BlockSource,
+    ) -> ProviderResult<Option<SealedOrRecoveredBlock<Self::Block>>> {
+        self.find_block_by_hash(hash, source).map(|block| {
+            block.map(|block| SealedOrRecoveredBlock::sealed(block.seal_unchecked(hash)))
+        })
+    }
 
     /// Returns the block with given id from the database.
     ///
@@ -149,7 +166,7 @@ pub trait BlockReader:
     fn block_by_transaction_id(&self, id: TxNumber) -> ProviderResult<Option<BlockNumber>>;
 }
 
-impl<T: BlockReader> BlockReader for Arc<T> {
+impl<T: BlockReader + Send + Sync> BlockReader for Arc<T> {
     type Block = T::Block;
 
     fn find_block_by_hash(
@@ -158,6 +175,13 @@ impl<T: BlockReader> BlockReader for Arc<T> {
         source: BlockSource,
     ) -> ProviderResult<Option<Self::Block>> {
         T::find_block_by_hash(self, hash, source)
+    }
+    fn find_sealed_or_recovered_block(
+        &self,
+        hash: B256,
+        source: BlockSource,
+    ) -> ProviderResult<Option<SealedOrRecoveredBlock<Self::Block>>> {
+        T::find_sealed_or_recovered_block(self, hash, source)
     }
     fn block(&self, id: BlockHashOrNumber) -> ProviderResult<Option<Self::Block>> {
         T::block(self, id)
@@ -210,7 +234,7 @@ impl<T: BlockReader> BlockReader for Arc<T> {
     }
 }
 
-impl<T: BlockReader> BlockReader for &T {
+impl<T: BlockReader + Send + Sync> BlockReader for &T {
     type Block = T::Block;
 
     fn find_block_by_hash(
@@ -219,6 +243,13 @@ impl<T: BlockReader> BlockReader for &T {
         source: BlockSource,
     ) -> ProviderResult<Option<Self::Block>> {
         T::find_block_by_hash(self, hash, source)
+    }
+    fn find_sealed_or_recovered_block(
+        &self,
+        hash: B256,
+        source: BlockSource,
+    ) -> ProviderResult<Option<SealedOrRecoveredBlock<Self::Block>>> {
+        T::find_sealed_or_recovered_block(self, hash, source)
     }
     fn block(&self, id: BlockHashOrNumber) -> ProviderResult<Option<Self::Block>> {
         T::block(self, id)
@@ -382,7 +413,7 @@ pub trait BlockReaderIdExt: BlockReader + ReceiptProviderIdExt {
 }
 
 /// Functionality to read the last known chain blocks from the database.
-pub trait ChainStateBlockReader: Send + Sync {
+pub trait ChainStateBlockReader: Send {
     /// Returns the last finalized block number.
     ///
     /// If no finalized block has been written yet, this returns `None`.
@@ -394,7 +425,7 @@ pub trait ChainStateBlockReader: Send + Sync {
 }
 
 /// Functionality to write the last known chain blocks to the database.
-pub trait ChainStateBlockWriter: Send + Sync {
+pub trait ChainStateBlockWriter: Send {
     /// Saves the given finalized block number in the DB.
     fn save_finalized_block_number(&self, block_number: BlockNumber) -> ProviderResult<()>;
 

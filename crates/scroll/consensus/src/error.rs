@@ -57,7 +57,7 @@ impl From<ScrollConsensusError> for ConsensusError {
     fn from(value: ScrollConsensusError) -> Self {
         match value {
             ScrollConsensusError::Eth(eth) => eth,
-            err => Self::Other(err.to_string()),
+            err => Self::other(err),
         }
     }
 }

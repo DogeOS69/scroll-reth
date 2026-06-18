@@ -4,12 +4,13 @@ use crate::{
 };
 use alloc::sync::Arc;
 
-use alloy_consensus::{BlockHeader as _, TxReceipt, EMPTY_OMMER_ROOT_HASH};
+use alloy_consensus::{BlockHeader as _, EMPTY_OMMER_ROOT_HASH};
 use alloy_primitives::{b64, Address, B256, B64, U256};
 use core::fmt::Debug;
-use reth_chainspec::{EthChainSpec, EthereumHardforks};
+use reth_chainspec::EthChainSpec;
 use reth_consensus::{
     validate_state_root, Consensus, ConsensusError, FullConsensus, HeaderValidator,
+    ReceiptRootBloom,
 };
 use reth_consensus_common::validation::{
     validate_against_parent_hash_number, validate_body_against_header, validate_header_gas,
@@ -17,7 +18,6 @@ use reth_consensus_common::validation::{
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{
     constants::{GAS_LIMIT_BOUND_DIVISOR, MINIMUM_GAS_LIMIT},
-    receipt::gas_spent_by_transactions,
     Block, BlockBody, BlockHeader, GotExpected, NodePrimitives, RecoveredBlock, SealedBlock,
     SealedHeader, SignedTransaction,
 };
@@ -50,37 +50,16 @@ impl<
         &self,
         block: &RecoveredBlock<N::Block>,
         result: &BlockExecutionResult<N::Receipt>,
+        receipt_root_bloom: Option<ReceiptRootBloom>,
+        block_access_list_hash: Option<B256>,
     ) -> Result<(), ConsensusError> {
-        // verify the block gas used
-        let cumulative_gas_used =
-            result.receipts.last().map(|r| r.cumulative_gas_used()).unwrap_or(0);
-        if block.gas_used() != cumulative_gas_used {
-            return Err(ConsensusError::BlockGasUsed {
-                gas: GotExpected { got: cumulative_gas_used, expected: block.gas_used() },
-                gas_spent_by_tx: gas_spent_by_transactions(&result.receipts),
-            });
-        }
-
-        // verify the receipts logs bloom and root
-        #[allow(clippy::collapsible_if)]
-        if self.chain_spec.is_byzantium_active_at_block(block.header().number()) {
-            if let Err(error) = reth_ethereum_consensus::verify_receipts(
-                block.header().receipts_root(),
-                block.header().logs_bloom(),
-                &result.receipts,
-            ) {
-                tracing::debug!(
-                    %error,
-                    ?result.receipts,
-                    header_receipt_root = ?block.header().receipts_root(),
-                    header_bloom = ?block.header().logs_bloom(),
-                    "failed to verify receipts"
-                );
-                return Err(error);
-            }
-        }
-
-        Ok(())
+        reth_ethereum_consensus::validate_block_post_execution(
+            block,
+            self.chain_spec.as_ref(),
+            result,
+            receipt_root_bloom,
+            block_access_list_hash,
+        )
     }
 }
 
@@ -95,8 +74,6 @@ where
     <B::Body as BlockBody>::Transaction: ScrollTransaction,
     ChainSpec: EthChainSpec + ScrollHardforks,
 {
-    type Error = ConsensusError;
-
     fn validate_body_against_header(
         &self,
         body: &B::Body,
@@ -109,7 +86,7 @@ where
         // Check no ommers.
         let ommers_len = block.body().ommers().map(|o| o.len()).unwrap_or_default();
         if ommers_len > 0 {
-            return Err(ConsensusError::Other("uncles not allowed".to_string()))
+            return Err(ConsensusError::msg("uncles not allowed"))
         }
 
         // Check ommers hash
@@ -131,7 +108,7 @@ where
 
         // Check withdrawals are empty
         if block.body().withdrawals().is_some() {
-            return Err(ConsensusError::Other(ScrollConsensusError::WithdrawalsNonEmpty.to_string()))
+            return Err(ScrollConsensusError::WithdrawalsNonEmpty.into())
         }
 
         // Check L1 messages.
@@ -167,9 +144,7 @@ impl<ChainSpec: EthChainSpec + ScrollHardforks, H: BlockHeader> HeaderValidator<
 
         // ensure that the blob gas fields for this block
         if self.chain_spec.blob_params_at_timestamp(header.timestamp()).is_some() {
-            return Err(ConsensusError::Other(
-                ScrollConsensusError::UnexpectedBlobParams.to_string(),
-            ))
+            return Err(ScrollConsensusError::UnexpectedBlobParams.into())
         }
 
         Ok(())

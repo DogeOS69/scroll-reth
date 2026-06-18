@@ -117,6 +117,20 @@
 #[macro_use]
 extern crate alloc;
 
+#[cfg(feature = "dashmap")]
+pub use dashmap;
+
+/// Re-export of [`quanta::Instant`] for high-resolution timing with minimal overhead.
+#[cfg(feature = "quanta")]
+pub use quanta::Instant as FastInstant;
+
+/// Fallback to [`std::time::Instant`] when the `quanta` feature is disabled.
+///
+/// This keeps `FastInstant` available for `std` consumers that opt out of `quanta` or build
+/// for targets where `quanta`'s platform timing backend is unavailable.
+#[cfg(all(feature = "std", not(feature = "quanta")))]
+pub use std::time::Instant as FastInstant;
+
 /// Common constants.
 pub mod constants;
 pub use constants::gas_units::{format_gas, format_gas_throughput};
@@ -145,7 +159,7 @@ pub use block::{
     body::{BlockBody, FullBlockBody},
     header::{AlloyBlockHeader, BlockHeader, FullBlockHeader},
     recovered::IndexedTx,
-    Block, FullBlock, RecoveredBlock, SealedBlock,
+    Block, FullBlock, RecoveredBlock, SealedBlock, SealedBlockWith, SealedOrRecoveredBlock,
 };
 
 mod withdrawal;
@@ -162,7 +176,7 @@ pub use alloy_primitives::{logs_bloom, Log, LogData};
 pub mod proofs;
 
 mod storage;
-pub use storage::StorageEntry;
+pub use storage::{StorageEntry, ValueWithSubKey};
 
 pub mod sync;
 

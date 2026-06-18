@@ -119,7 +119,7 @@ impl HashBuilder {
         let root = self.current_root();
         if root == EMPTY_ROOT_HASH {
             if let Some(proof_retainer) = self.proof_retainer.as_mut() {
-                proof_retainer.retain(&Nibbles::default(), &[])
+                proof_retainer.retain_empty_root_proof()
             }
         }
         root
@@ -170,7 +170,7 @@ impl HashBuilder {
             let preceding_exists = !self.state_masks.is_empty();
             let preceding_len = self.state_masks.len().saturating_sub(1);
 
-            let common_prefix_len = succeeding.common_prefix_length(current.as_slice());
+            let common_prefix_len = succeeding.common_prefix_length(&current);
             let len = cmp::max(preceding_len, common_prefix_len);
             assert!(len < current.len(), "len {} current.len {}", len, current.len());
 
@@ -184,7 +184,7 @@ impl HashBuilder {
             );
 
             // Adjust the state masks for branch calculation
-            let extra_digit = current[len];
+            let extra_digit = current.get(len).expect("len is in bounds");
             if self.state_masks.len() <= len {
                 let new_len = len + 1;
                 trace!(target: "trie::hash_builder", new_len, old_len = self.state_masks.len(), "scaling state masks to fit");
@@ -351,14 +351,18 @@ impl HashBuilder {
         trace!(target: "trie::hash_builder", ?current, ?len, ?children, "store branch node");
         if len > 0 {
             let parent_index = len - 1;
-            self.hash_masks[parent_index] |= TrieMask::from_nibble(current[parent_index]);
+            self.hash_masks[parent_index] |= TrieMask::from_nibble(
+                current.get(parent_index).expect("parent index is in bounds"),
+            );
         }
 
         let store_in_db_trie = !self.tree_masks[len].is_empty() || !self.hash_masks[len].is_empty();
         if store_in_db_trie {
             if len > 0 {
                 let parent_index = len - 1;
-                self.tree_masks[parent_index] |= TrieMask::from_nibble(current[parent_index]);
+                self.tree_masks[parent_index] |= TrieMask::from_nibble(
+                    current.get(parent_index).expect("parent index is in bounds"),
+                );
             }
 
             if self.updated_branch_nodes.is_some() {
@@ -391,7 +395,8 @@ impl HashBuilder {
 
     fn update_masks(&mut self, current: &Nibbles, len_from: usize) {
         if len_from > 0 {
-            let flag = TrieMask::from_nibble(current[len_from - 1]);
+            let flag =
+                TrieMask::from_nibble(current.get(len_from - 1).expect("len_from is in bounds"));
 
             self.hash_masks[len_from - 1] &= !flag;
 
@@ -425,7 +430,7 @@ impl From<reth_trie::HashBuilder> for HashBuilder {
                 .into_iter()
                 .map(|x| x.as_slice().try_into().expect("RlpNode contains 32 byte hashes"))
                 .collect(),
-            state_masks: hash_builder.groups,
+            state_masks: hash_builder.state_masks,
             tree_masks: hash_builder.tree_masks,
             hash_masks: hash_builder.hash_masks,
             stored_in_database: hash_builder.stored_in_database,
@@ -447,7 +452,7 @@ impl From<HashBuilder> for reth_trie::HashBuilder {
                     reth_trie::RlpNode::from_raw(&x.0).expect("32 byte hash can be cast to RlpNode")
                 })
                 .collect(),
-            groups: value.state_masks,
+            state_masks: value.state_masks,
             tree_masks: value.tree_masks,
             hash_masks: value.hash_masks,
             stored_in_database: value.stored_in_database,

@@ -4,7 +4,7 @@ use alloc::sync::Arc;
 use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::{eip2718::WithEncoded, Decodable2718};
 use alloy_evm::{FromRecoveredTx, FromTxWithEncoded};
-use alloy_primitives::B256;
+use alloy_primitives::{Bytes, B256};
 use alloy_rpc_types_engine::ExecutionData;
 use core::convert::Infallible;
 use reth_chainspec::EthChainSpec;
@@ -63,7 +63,7 @@ where
         let spec_id = self.spec_id_at_timestamp_and_number(header.timestamp(), header.number());
 
         let cfg_env = CfgEnv::<ScrollSpecId>::default()
-            .with_spec(spec_id)
+            .with_spec_and_mainnet_gas_params(spec_id)
             .with_chain_id(chain_spec.chain().id());
 
         // get coinbase from chain spec
@@ -83,6 +83,7 @@ where
             basefee: header.base_fee_per_gas().unwrap_or_default(),
             // EIP-4844 excess blob gas of this block, introduced in Cancun
             blob_excess_gas_and_price: None,
+            slot_num: header.slot_number().unwrap_or_default(),
         };
 
         Ok(EvmEnv { cfg_env, block_env })
@@ -102,7 +103,7 @@ where
         // configure evm env based on parent block
         let cfg_env = CfgEnv::<ScrollSpecId>::default()
             .with_chain_id(chain_spec.chain().id())
-            .with_spec(spec_id);
+            .with_spec_and_mainnet_gas_params(spec_id);
 
         // get coinbase from chain spec
         let coinbase = if let Some(vault_address) = chain_spec.chain_config().fee_vault_address {
@@ -120,6 +121,7 @@ where
             gas_limit: attributes.gas_limit,
             basefee: attributes.base_fee,
             blob_excess_gas_and_price: None,
+            slot_num: 0,
         };
 
         Ok(EvmEnv { cfg_env, block_env })
@@ -166,7 +168,7 @@ where
 
         let cfg_env = CfgEnv::<ScrollSpecId>::default()
             .with_chain_id(chain_spec.chain().id())
-            .with_spec(spec_id);
+            .with_spec_and_mainnet_gas_params(spec_id);
 
         // get coinbase from chain config.
         let coinbase =
@@ -185,6 +187,7 @@ where
             gas_limit: payload.payload.as_v1().gas_limit,
             basefee: payload.payload.as_v1().base_fee_per_gas.to(),
             blob_excess_gas_and_price: None,
+            slot_num: payload.payload.as_v4().map(|v4| v4.slot_number).unwrap_or_default(),
         };
 
         Ok(EvmEnv { cfg_env, block_env })
@@ -201,12 +204,15 @@ where
         &self,
         payload: &ExecutionData,
     ) -> Result<impl ExecutableTxIterator<Self>, Self::Error> {
-        Ok(payload.payload.transactions().clone().into_iter().map(|encoded| {
+        let txs = payload.payload.transactions().clone();
+        let convert = |encoded: Bytes| {
             let tx = TxTy::<Self::Primitives>::decode_2718_exact(encoded.as_ref())
                 .map_err(AnyError::new)?;
             let signer = tx.try_recover().map_err(AnyError::new)?;
             Ok::<_, AnyError>(WithEncoded::new(encoded, tx.with_signer(signer)))
-        }))
+        };
+
+        Ok((txs, convert))
     }
 }
 

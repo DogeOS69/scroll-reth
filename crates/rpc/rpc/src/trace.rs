@@ -16,11 +16,11 @@ use alloy_rpc_types_trace::{
     tracerequest::TraceCallRequest,
 };
 use async_trait::async_trait;
+use futures::StreamExt;
 use jsonrpsee::core::RpcResult;
-use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardfork, MAINNET, SEPOLIA};
+use reth_chainspec::{ChainSpecProvider, EthereumHardforks};
 use reth_evm::ConfigureEvm;
 use reth_primitives_traits::{BlockBody, BlockHeader};
-use reth_revm::{database::StateProviderDatabase, db::CacheDB};
 use reth_rpc_api::TraceApiServer;
 use reth_rpc_convert::RpcTxReq;
 use reth_rpc_eth_api::{
@@ -40,6 +40,11 @@ use revm_inspectors::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{AcquireError, OwnedSemaphorePermit};
+
+/// Maximum number of `trace_filter` blocks replayed concurrently.
+const TRACE_FILTER_BLOCK_BUFFER_SIZE: usize = 4;
+/// Number of blocks fetched per provider range read in `trace_filter`.
+const TRACE_FILTER_FETCH_CHUNK_SIZE: usize = 16;
 
 /// `trace` API implementation.
 ///
@@ -103,10 +108,6 @@ where
         let this = self.clone();
         self.eth_api()
             .spawn_with_call_at(trace_request.call, at, overrides, move |db, evm_env, tx_env| {
-                // wrapper is hack to get around 'higher-ranked lifetime error', see
-                // <https://github.com/rust-lang/rust/issues/100013>
-                let db = db.0;
-
                 let res = this.eth_api().inspect(&mut *db, evm_env, tx_env, &mut inspector)?;
                 let trace_res = inspector
                     .into_parity_builder()
@@ -154,17 +155,14 @@ where
         let at = block_id.unwrap_or(BlockId::pending());
         let (evm_env, at) = self.eth_api().evm_env_at(at).await?;
 
-        let this = self.clone();
         // execute all transactions on top of each other and record the traces
         self.eth_api()
-            .spawn_with_state_at_block(at, move |state| {
+            .spawn_with_state_at_block(at, move |eth_api, mut db| {
                 let mut results = Vec::with_capacity(calls.len());
-                let mut db = CacheDB::new(StateProviderDatabase::new(state));
-
                 let mut calls = calls.into_iter().peekable();
 
                 while let Some((call, trace_types)) = calls.next() {
-                    let (evm_env, tx_env) = this.eth_api().prepare_call_env(
+                    let (evm_env, tx_env) = eth_api.prepare_call_env(
                         evm_env.clone(),
                         call,
                         &mut db,
@@ -172,7 +170,7 @@ where
                     )?;
                     let config = TracingInspectorConfig::from_parity_config(&trace_types);
                     let mut inspector = TracingInspector::new(config);
-                    let res = this.eth_api().inspect(&mut db, evm_env, tx_env, &mut inspector)?;
+                    let res = eth_api.inspect(&mut db, evm_env, tx_env, &mut inspector)?;
 
                     let trace_res = inspector
                         .into_parity_builder()
@@ -184,8 +182,6 @@ where
                     // need to apply the state changes of this call before executing the
                     // next call
                     if calls.peek().is_some() {
-                        // need to apply the state changes of this call before executing
-                        // the next call
                         db.commit(res.state)
                     }
                 }
@@ -287,21 +283,13 @@ where
     ///
     /// - if Paris hardfork is activated, no block rewards are given
     /// - if Paris hardfork is not activated, calculate block rewards with block number only
-    /// - if Paris hardfork is unknown, calculate block rewards with block number and ttd
     fn calculate_base_block_reward<H: BlockHeader>(
         &self,
         header: &H,
     ) -> Result<Option<u128>, Eth::Error> {
         let chain_spec = self.provider().chain_spec();
-        let is_paris_activated = if chain_spec.chain() == MAINNET.chain() {
-            Some(header.number()) >= EthereumHardfork::Paris.mainnet_activation_block()
-        } else if chain_spec.chain() == SEPOLIA.chain() {
-            Some(header.number()) >= EthereumHardfork::Paris.sepolia_activation_block()
-        } else {
-            true
-        };
 
-        if is_paris_activated {
+        if chain_spec.is_paris_active_at_block(header.number()) {
             return Ok(None)
         }
 
@@ -314,6 +302,7 @@ where
     fn extract_reward_traces<H: BlockHeader>(
         &self,
         header: &H,
+        block_hash: BlockHash,
         ommers: Option<&[H]>,
         base_block_reward: u128,
     ) -> Vec<LocalizedTransactionTrace> {
@@ -322,6 +311,7 @@ where
 
         let block_reward = block_reward(base_block_reward, ommers_cnt);
         traces.push(reward_trace(
+            block_hash,
             header,
             RewardAction {
                 author: header.beneficiary(),
@@ -335,6 +325,7 @@ where
         for uncle in ommers {
             let uncle_reward = ommer_reward(base_block_reward, header.number(), uncle.number());
             traces.push(reward_trace(
+                block_hash,
                 header,
                 RewardAction {
                     author: uncle.beneficiary(),
@@ -363,7 +354,7 @@ where
     ) -> Result<Vec<LocalizedTransactionTrace>, Eth::Error> {
         // We'll reuse the matcher across multiple blocks that are traced in parallel
         let matcher = Arc::new(filter.matcher());
-        let TraceFilter { from_block, to_block, after, count, .. } = filter;
+        let TraceFilter { from_block, to_block, mut after, count, .. } = filter;
         let start = from_block.unwrap_or(0);
 
         let latest_block = self.provider().best_block_number().map_err(Eth::Error::from_eth_err)?;
@@ -372,6 +363,16 @@ where
             return Err(EthApiError::HeaderNotFound(start.into()).into());
         }
         let end = to_block.unwrap_or(latest_block);
+        if end > latest_block {
+            return Err(EthApiError::HeaderNotFound(end.into()).into());
+        }
+
+        // Check if the requested range overlaps with pruned history (EIP-4444)
+        let earliest_block =
+            self.provider().earliest_block_number().map_err(Eth::Error::from_eth_err)?;
+        if start < earliest_block {
+            return Err(EthApiError::PrunedHistoryUnavailable.into());
+        }
 
         if start > end {
             return Err(EthApiError::InvalidParams(
@@ -380,89 +381,115 @@ where
             .into())
         }
 
-        // ensure that the range is not too large, since we need to fetch all blocks in the range
+        // ensure that the range is not too large, since every block in the range may be replayed
         let distance = end.saturating_sub(start);
         if distance > self.inner.eth_config.max_trace_filter_blocks {
-            return Err(EthApiError::InvalidParams(
-                "Block range too large; currently limited to 100 blocks".to_string(),
-            )
+            return Err(EthApiError::InvalidParams(format!(
+                "Block range too large; currently limited to {} blocks",
+                self.inner.eth_config.max_trace_filter_blocks
+            ))
             .into())
         }
 
-        // fetch all blocks in that range
-        let blocks = self
-            .provider()
-            .recovered_block_range(start..=end)
-            .map_err(Eth::Error::from_eth_err)?
-            .into_iter()
-            .map(Arc::new)
-            .collect::<Vec<_>>();
+        let mut all_traces = Vec::new();
+        let block_buffer_size =
+            self.inner.eth_config.max_tracing_requests.clamp(1, TRACE_FILTER_BLOCK_BUFFER_SIZE);
+        let mut include_reward_traces = true;
 
-        // trace all blocks
-        let mut block_traces = Vec::with_capacity(blocks.len());
-        for block in &blocks {
-            let matcher = matcher.clone();
-            let traces = self.eth_api().trace_block_until(
-                block.hash().into(),
-                Some(block.clone()),
-                None,
-                TracingInspectorConfig::default_parity(),
-                move |tx_info, mut ctx| {
-                    let mut traces = ctx
-                        .take_inspector()
-                        .into_parity_builder()
-                        .into_localized_transaction_traces(tx_info);
-                    traces.retain(|trace| matcher.matches(&trace.trace));
-                    Ok(Some(traces))
-                },
-            );
-            block_traces.push(traces);
-        }
+        for chunk_start in (start..=end).step_by(TRACE_FILTER_FETCH_CHUNK_SIZE) {
+            let chunk_end = (chunk_start + TRACE_FILTER_FETCH_CHUNK_SIZE as u64 - 1).min(end);
 
-        let block_traces = futures::future::try_join_all(block_traces).await?;
-        let mut all_traces = block_traces
-            .into_iter()
-            .flatten()
-            .flat_map(|traces| traces.into_iter().flatten().flat_map(|traces| traces.into_iter()))
-            .collect::<Vec<_>>();
+            let blocks = self
+                .eth_api()
+                .spawn_blocking_io(move |this| {
+                    let blocks = this
+                        .provider()
+                        .recovered_block_range(chunk_start..=chunk_end)
+                        .map_err(Eth::Error::from_eth_err)?;
 
-        // add reward traces for all blocks
-        for block in &blocks {
-            if let Some(base_block_reward) = self.calculate_base_block_reward(block.header())? {
-                all_traces.extend(
-                    self.extract_reward_traces(
-                        block.header(),
-                        block.body().ommers(),
-                        base_block_reward,
-                    )
-                    .into_iter()
-                    .filter(|trace| matcher.matches(&trace.trace)),
-                );
-            } else {
-                // no block reward, means we're past the Paris hardfork and don't expect any rewards
-                // because the blocks in ascending order
-                break
+                    Ok(blocks.into_iter().map(Arc::new).collect::<Vec<_>>())
+                })
+                .await?;
+
+            let mut block_replays = futures::stream::iter(blocks)
+                .map(|block| {
+                    let this = self.clone();
+                    let matcher = matcher.clone();
+
+                    let block_hash = block.hash();
+
+                    async move {
+                        let permit = this.acquire_trace_permit().await;
+                        let traces = this
+                            .eth_api()
+                            .trace_block_until(
+                                block_hash.into(),
+                                Some(block.clone()),
+                                None,
+                                TracingInspectorConfig::default_parity(),
+                                move |tx_info, mut ctx| {
+                                    // Keep the block replay permit inside the spawned replay task.
+                                    let _block_replay_permit = &permit;
+                                    let mut traces = ctx
+                                        .take_inspector()
+                                        .into_parity_builder()
+                                        .into_localized_transaction_traces(tx_info);
+                                    traces.retain(|trace| matcher.matches(&trace.trace));
+                                    Ok(Some(traces))
+                                },
+                            )
+                            .await?;
+
+                        Ok::<_, Eth::Error>((block, traces))
+                    }
+                })
+                .buffered(block_buffer_size);
+
+            while let Some(block_replay) = block_replays.next().await {
+                let (block, traces) = block_replay?;
+                let reward_traces = if include_reward_traces {
+                    if let Some(base_block_reward) =
+                        self.calculate_base_block_reward(block.header())?
+                    {
+                        self.extract_reward_traces(
+                            block.header(),
+                            block.hash(),
+                            block.body().ommers(),
+                            base_block_reward,
+                        )
+                        .into_iter()
+                        .filter(|trace| matcher.matches(&trace.trace))
+                        .collect::<Vec<_>>()
+                    } else {
+                        // Blocks are processed in ascending order, so once a historical range
+                        // reaches post-Paris blocks, later blocks in the range have no rewards.
+                        include_reward_traces = false;
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                };
+
+                if let Some(traces) = traces {
+                    all_traces.extend(traces.into_iter().flatten().flatten());
+                }
+                all_traces.extend(reward_traces);
+
+                if let Some(traces) =
+                    apply_trace_filter_pagination(&mut all_traces, &mut after, count)
+                {
+                    return Ok(traces)
+                }
             }
         }
 
-        // Skips the first `after` number of matching traces.
-        // If `after` is greater than or equal to the number of matched traces, it returns an empty
-        // array.
-        if let Some(after) = after.map(|a| a as usize) {
-            if after < all_traces.len() {
-                all_traces.drain(..after);
-            } else {
-                return Ok(vec![])
-            }
+        // If `after` is greater than or equal to the number of matched traces, it returns an
+        // empty array.
+        if let Some(cutoff) = after.map(|a| a as usize) &&
+            cutoff >= all_traces.len()
+        {
+            return Ok(vec![])
         }
-
-        // Return at most `count` of traces
-        if let Some(count) = count {
-            let count = count as usize;
-            if count < all_traces.len() {
-                all_traces.truncate(count);
-            }
-        };
 
         Ok(all_traces)
     }
@@ -472,36 +499,39 @@ where
         &self,
         block_id: BlockId,
     ) -> Result<Option<Vec<LocalizedTransactionTrace>>, Eth::Error> {
-        let traces = self.eth_api().trace_block_with(
-            block_id,
-            None,
-            TracingInspectorConfig::default_parity(),
-            |tx_info, mut ctx| {
-                let traces = ctx
-                    .take_inspector()
-                    .into_parity_builder()
-                    .into_localized_transaction_traces(tx_info);
-                Ok(traces)
-            },
-        );
+        let Some(block) = self.eth_api().recovered_block(block_id).await? else {
+            return Err(EthApiError::HeaderNotFound(block_id).into());
+        };
 
-        let block = self.eth_api().recovered_block(block_id);
-        let (maybe_traces, maybe_block) = futures::try_join!(traces, block)?;
+        let mut traces = self
+            .eth_api()
+            .trace_block_with(
+                block_id,
+                Some(block.clone()),
+                TracingInspectorConfig::default_parity(),
+                |tx_info, mut ctx| {
+                    let traces = ctx
+                        .take_inspector()
+                        .into_parity_builder()
+                        .into_localized_transaction_traces(tx_info);
+                    Ok(traces)
+                },
+            )
+            .await?
+            .map(|traces| traces.into_iter().flatten().collect::<Vec<_>>());
 
-        let mut maybe_traces =
-            maybe_traces.map(|traces| traces.into_iter().flatten().collect::<Vec<_>>());
-
-        if let (Some(block), Some(traces)) = (maybe_block, maybe_traces.as_mut()) &&
+        if let Some(traces) = traces.as_mut() &&
             let Some(base_block_reward) = self.calculate_base_block_reward(block.header())?
         {
             traces.extend(self.extract_reward_traces(
                 block.header(),
+                block.hash(),
                 block.body().ommers(),
                 base_block_reward,
             ));
         }
 
-        Ok(maybe_traces)
+        Ok(traces)
     }
 
     /// Replays all transactions in a block
@@ -546,11 +576,15 @@ where
         &self,
         block_id: BlockId,
     ) -> Result<Option<BlockOpcodeGas>, Eth::Error> {
-        let res = self
+        let Some(block) = self.eth_api().recovered_block(block_id).await? else {
+            return Err(EthApiError::HeaderNotFound(block_id).into());
+        };
+
+        let Some(transactions) = self
             .eth_api()
             .trace_block_inspector(
                 block_id,
-                None,
+                Some(block.clone()),
                 OpcodeGasInspector::default,
                 move |tx_info, ctx| {
                     let trace = TransactionOpcodeGas {
@@ -560,11 +594,10 @@ where
                     Ok(trace)
                 },
             )
-            .await?;
-
-        let Some(transactions) = res else { return Ok(None) };
-
-        let Some(block) = self.eth_api().recovered_block(block_id).await? else { return Ok(None) };
+            .await?
+        else {
+            return Ok(None);
+        };
 
         Ok(Some(BlockOpcodeGas {
             block_hash: block.hash(),
@@ -579,27 +612,32 @@ where
         &self,
         block_id: BlockId,
     ) -> Result<Option<BlockStorageAccess>, Eth::Error> {
-        let res = self
+        let Some(block) = self.eth_api().recovered_block(block_id).await? else {
+            return Err(EthApiError::HeaderNotFound(block_id).into());
+        };
+
+        let Some(transactions) = self
             .eth_api()
             .trace_block_inspector(
                 block_id,
-                None,
+                Some(block.clone()),
                 StorageInspector::default,
-                move |tx_info, ctx| {
+                move |tx_info, mut ctx| {
+                    let unique_loads = ctx.inspector.unique_loads();
+                    let warm_loads = ctx.inspector.warm_loads();
                     let trace = TransactionStorageAccess {
                         transaction_hash: tx_info.hash.expect("tx hash is set"),
-                        storage_access: ctx.inspector.accessed_slots().clone(),
-                        unique_loads: ctx.inspector.unique_loads(),
-                        warm_loads: ctx.inspector.warm_loads(),
+                        storage_access: ctx.take_inspector().into_accessed_slots(),
+                        unique_loads,
+                        warm_loads,
                     };
                     Ok(trace)
                 },
             )
-            .await?;
-
-        let Some(transactions) = res else { return Ok(None) };
-
-        let Some(block) = self.eth_api().recovered_block(block_id).await? else { return Ok(None) };
+            .await?
+        else {
+            return Ok(None);
+        };
 
         Ok(Some(BlockStorageAccess {
             block_hash: block.hash(),
@@ -607,6 +645,34 @@ where
             transactions,
         }))
     }
+}
+
+fn apply_trace_filter_pagination(
+    all_traces: &mut Vec<LocalizedTransactionTrace>,
+    after: &mut Option<u64>,
+    count: Option<u64>,
+) -> Option<Vec<LocalizedTransactionTrace>> {
+    // Skips the first `after` number of matching traces.
+    if let Some(cutoff) = after.map(|a| a as usize) &&
+        cutoff < all_traces.len()
+    {
+        all_traces.drain(..cutoff);
+        // we removed the first `after` traces
+        *after = None;
+    }
+
+    // Return at most `count` traces after `after` has been consumed.
+    if after.is_none() &&
+        let Some(count) = count
+    {
+        let count = count as usize;
+        if count < all_traces.len() {
+            all_traces.truncate(count);
+            return Some(std::mem::take(all_traces))
+        }
+    }
+
+    None
 }
 
 #[async_trait]
@@ -782,9 +848,13 @@ pub struct BlockStorageAccess {
 
 /// Helper to construct a [`LocalizedTransactionTrace`] that describes a reward to the block
 /// beneficiary.
-fn reward_trace<H: BlockHeader>(header: &H, reward: RewardAction) -> LocalizedTransactionTrace {
+fn reward_trace<H: BlockHeader>(
+    block_hash: BlockHash,
+    header: &H,
+    reward: RewardAction,
+) -> LocalizedTransactionTrace {
     LocalizedTransactionTrace {
-        block_hash: Some(header.hash_slow()),
+        block_hash: Some(block_hash),
         block_number: Some(header.number()),
         transaction_hash: None,
         transaction_position: None,
@@ -795,5 +865,72 @@ fn reward_trace<H: BlockHeader>(header: &H, reward: RewardAction) -> LocalizedTr
             error: None,
             result: None,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn localized_transaction_trace(
+        block_number: u64,
+        transaction_position: u64,
+    ) -> LocalizedTransactionTrace {
+        LocalizedTransactionTrace {
+            block_hash: Some(B256::ZERO),
+            block_number: Some(block_number),
+            transaction_hash: Some(B256::ZERO),
+            transaction_position: Some(transaction_position),
+            trace: TransactionTrace::default(),
+        }
+    }
+
+    fn localized_reward_trace(block_number: u64) -> LocalizedTransactionTrace {
+        LocalizedTransactionTrace {
+            block_hash: Some(B256::ZERO),
+            block_number: Some(block_number),
+            transaction_hash: None,
+            transaction_position: None,
+            trace: TransactionTrace {
+                trace_address: vec![],
+                subtraces: 0,
+                action: Action::Reward(RewardAction {
+                    author: Address::ZERO,
+                    reward_type: RewardType::Block,
+                    value: U256::ZERO,
+                }),
+                error: None,
+                result: None,
+            },
+        }
+    }
+
+    fn trace_order(traces: &[LocalizedTransactionTrace]) -> Vec<(u64, Option<u64>, bool)> {
+        traces
+            .iter()
+            .map(|trace| {
+                (
+                    trace.block_number.unwrap(),
+                    trace.transaction_position,
+                    trace.trace.action.is_reward(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn trace_filter_paginates_after_per_block_reward_order() {
+        let mut all_traces = vec![
+            localized_transaction_trace(1, 0),
+            localized_reward_trace(1),
+            localized_transaction_trace(2, 0),
+            localized_reward_trace(2),
+        ];
+
+        let mut after = Some(1);
+        let paginated =
+            apply_trace_filter_pagination(&mut all_traces, &mut after, Some(1)).unwrap();
+
+        assert_eq!(trace_order(&paginated), vec![(1, None, true)]);
     }
 }

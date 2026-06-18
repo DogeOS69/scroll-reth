@@ -11,16 +11,15 @@ use reth_basic_payload_builder::{
     is_better_payload, BuildArguments, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour,
     PayloadBuilder, PayloadConfig,
 };
-use reth_chain_state::{ExecutedBlock, ExecutedBlockWithTrieUpdates, ExecutedTrieUpdates};
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::{
     block::{BlockExecutionError, BlockValidationError},
     execute::{BlockBuilder, BlockBuilderOutcome, ProviderError},
     ConfigureEvm, Database, Evm,
 };
-use reth_execution_types::ExecutionOutcome;
+use reth_execution_types::BlockExecutionOutput;
 use reth_payload_builder::PayloadId;
-use reth_payload_primitives::{PayloadBuilderAttributes, PayloadBuilderError};
+use reth_payload_primitives::{BuiltPayloadExecutedBlock, PayloadBuilderError};
 use reth_payload_util::{BestPayloadTransactions, NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{RecoveredBlock, SealedHeader, SignedTransaction, TxTy};
 use reth_revm::{cancelled::CancelOnDrop, database::StateProviderDatabase, db::State};
@@ -32,7 +31,8 @@ use reth_storage_api::{BaseFeeProvider, StateProvider, StateProviderFactory};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, TransactionPool};
 use revm::context::Block;
 use scroll_alloy_hardforks::ScrollHardforks;
-use std::{boxed::Box, sync::Arc, vec, vec::Vec};
+use scroll_alloy_rpc_types_engine::ScrollPayloadAttributes;
+use std::{boxed::Box, sync::Arc, vec::Vec};
 
 /// A type that returns the [`PayloadTransactions`] that should be included in the pool.
 pub trait ScrollPayloadTransactions<Transaction>: Clone + Send + Sync + Unpin + 'static {
@@ -117,13 +117,18 @@ where
     /// a result indicating success with the payload or an error in case of failure.
     fn build_payload<'a, Txs>(
         &self,
-        args: BuildArguments<ScrollPayloadBuilderAttributes, ScrollBuiltPayload>,
+        args: BuildArguments<ScrollPayloadAttributes, ScrollBuiltPayload>,
         best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a,
     ) -> Result<BuildOutcome<ScrollBuiltPayload>, PayloadBuilderError>
     where
         Txs: PayloadTransactions<Transaction: PoolTransaction<Consensus = ScrollTransactionSigned>>,
     {
-        let BuildArguments { mut cached_reads, config, cancel, best_payload } = args;
+        let BuildArguments { mut cached_reads, config, cancel, best_payload, .. } = args;
+        let PayloadConfig { parent_header, parent_block_info, attributes, payload_id } = config;
+        let attributes =
+            ScrollPayloadBuilderAttributes::try_new(parent_header.hash(), attributes, payload_id)
+                .map_err(PayloadBuilderError::other)?;
+        let config = PayloadConfig { parent_header, parent_block_info, attributes, payload_id };
 
         let ctx = ScrollPayloadBuilderCtx {
             evm_config: self.evm_config.clone(),
@@ -163,7 +168,7 @@ where
         ConfigureEvm<Primitives = ScrollPrimitives, NextBlockEnvCtx = ScrollNextBlockEnvAttributes>,
     Txs: ScrollPayloadTransactions<Pool::Transaction>,
 {
-    type Attributes = ScrollPayloadBuilderAttributes;
+    type Attributes = ScrollPayloadAttributes;
     type BuiltPayload = ScrollBuiltPayload;
 
     fn try_build(
@@ -192,6 +197,8 @@ where
         let args = BuildArguments {
             config,
             cached_reads: Default::default(),
+            execution_cache: None,
+            trie_handle: None,
             cancel: Default::default(),
             best_payload: None,
         };
@@ -277,8 +284,8 @@ impl<Txs> ScrollBuilder<'_, Txs> {
             }
         }
 
-        let BlockBuilderOutcome { execution_result, hashed_state, trie_updates, mut block } =
-            builder.finish(state_provider)?;
+        let BlockBuilderOutcome { execution_result, hashed_state, trie_updates, mut block, .. } =
+            builder.finish(state_provider, None)?;
 
         // set the block fields using the hints from the payload attributes.
         let (mut scroll_block, senders) = block.split();
@@ -305,23 +312,15 @@ impl<Txs> ScrollBuilder<'_, Txs> {
         let sealed_block = Arc::new(block.sealed_block().clone());
         tracing::debug!(target: "payload_builder", id=%ctx.attributes().payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
 
-        let execution_outcome = ExecutionOutcome::new(
-            db.take_bundle(),
-            vec![execution_result.receipts],
-            block.number,
-            Vec::new(),
-        );
+        let state = db.take_bundle();
 
         // create the executed block data
-        let executed: ExecutedBlockWithTrieUpdates<ScrollPrimitives> =
-            ExecutedBlockWithTrieUpdates {
-                block: ExecutedBlock {
-                    recovered_block: Arc::new(block),
-                    execution_output: Arc::new(execution_outcome),
-                    hashed_state: Arc::new(hashed_state),
-                },
-                trie: ExecutedTrieUpdates::Present(Arc::new(trie_updates)),
-            };
+        let executed = BuiltPayloadExecutedBlock {
+            recovered_block: Arc::new(block),
+            execution_output: Arc::new(BlockExecutionOutput { result: execution_result, state }),
+            hashed_state: Arc::new(hashed_state),
+            trie_updates: Arc::new(trie_updates),
+        };
 
         let no_tx_pool = ctx.attributes().no_tx_pool;
 
@@ -465,8 +464,8 @@ where
                 ));
             }
 
-            let gas_used = match builder.execute_transaction(sequencer_tx.clone()) {
-                Ok(gas_used) => gas_used,
+            let gas_output = match builder.execute_transaction(sequencer_tx.clone()) {
+                Ok(gas_output) => gas_output,
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                     error,
                     ..
@@ -482,8 +481,11 @@ where
 
             // unspent gas is not refunded and not reallocated to other transactions for L1
             // messages.
-            let gas_used =
-                if sequencer_tx.is_l1_message() { sequencer_tx.gas_limit() } else { gas_used };
+            let gas_used = if sequencer_tx.is_l1_message() {
+                sequencer_tx.gas_limit()
+            } else {
+                gas_output.tx_gas_used()
+            };
 
             // add gas used by the transaction to cumulative gas used
             info.cumulative_gas_used += gas_used;
@@ -537,8 +539,8 @@ where
                 return Ok(None);
             }
 
-            let gas_used = match builder.execute_transaction(tx.clone()) {
-                Ok(gas_used) => gas_used,
+            let gas_output = match builder.execute_transaction(tx.clone()) {
+                Ok(gas_output) => gas_output,
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                     error,
                     ..
@@ -559,6 +561,7 @@ where
                     return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)))
                 }
             };
+            let gas_used = gas_output.tx_gas_used();
 
             // add gas used by the transaction to cumulative gas used, before creating the
             // receipt

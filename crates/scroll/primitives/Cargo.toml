@@ -78,6 +78,7 @@ serde = [
     "rand/serde",
 ]
 serde-bincode-compat = [
+    "reth-codec",
     "alloy-consensus/serde-bincode-compat",
     "alloy-eips/serde-bincode-compat",
     "reth-primitives-traits/serde-bincode-compat",

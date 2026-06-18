@@ -11,7 +11,7 @@ use core::marker::PhantomData;
 
 use alloy_consensus::{proofs, EMPTY_OMMER_ROOT_HASH};
 use alloy_eips::eip2718::Decodable2718;
-use alloy_primitives::U256;
+use alloy_primitives::{Bytes, U256};
 use alloy_rlp::BufMut;
 use alloy_rpc_types_engine::{
     ExecutionData, ExecutionPayload, ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3,
@@ -38,27 +38,27 @@ impl<
             ExecutionData = ExecutionData,
             BuiltPayload: BuiltPayload<Primitives: NodePrimitives<Block = ScrollBlock>>,
         >,
+        ExecutionData: reth_payload_primitives::ExecutionPayload + From<T::BuiltPayload>,
     > PayloadTypes for ScrollEngineTypes<T>
 {
     type ExecutionData = T::ExecutionData;
     type BuiltPayload = T::BuiltPayload;
     type PayloadAttributes = T::PayloadAttributes;
-    type PayloadBuilderAttributes = T::PayloadBuilderAttributes;
 
     fn block_to_payload(
         block: SealedBlock<
             <<Self::BuiltPayload as BuiltPayload>::Primitives as NodePrimitives>::Block,
         >,
-    ) -> ExecutionData {
-        let (payload, sidecar) =
-            ExecutionPayload::from_block_unchecked(block.hash(), &block.into_block());
-        ExecutionData { payload, sidecar }
+        bal: Option<Bytes>,
+    ) -> Self::ExecutionData {
+        T::block_to_payload(block, bal)
     }
 }
 
 impl<T> EngineTypes for ScrollEngineTypes<T>
 where
     T: PayloadTypes<ExecutionData = ExecutionData>,
+    ExecutionData: From<T::BuiltPayload>,
     T::BuiltPayload: BuiltPayload<Primitives: NodePrimitives<Block = ScrollBlock>>
         + TryInto<ExecutionPayloadV1>
         + TryInto<ExecutionPayloadEnvelopeV2>
@@ -70,6 +70,7 @@ where
     type ExecutionPayloadEnvelopeV3 = ExecutionPayloadEnvelopeV3;
     type ExecutionPayloadEnvelopeV4 = ExecutionPayloadEnvelopeV4;
     type ExecutionPayloadEnvelopeV5 = ExecutionPayloadEnvelopeV4;
+    type ExecutionPayloadEnvelopeV6 = ExecutionPayloadEnvelopeV4;
 }
 
 /// A default payload type for [`ScrollEngineTypes`]
@@ -81,15 +82,18 @@ impl PayloadTypes for ScrollPayloadTypes {
     type ExecutionData = ExecutionData;
     type BuiltPayload = ScrollBuiltPayload;
     type PayloadAttributes = ScrollPayloadAttributes;
-    type PayloadBuilderAttributes = ScrollPayloadBuilderAttributes;
 
     fn block_to_payload(
         block: SealedBlock<
             <<Self::BuiltPayload as BuiltPayload>::Primitives as NodePrimitives>::Block,
         >,
+        bal: Option<Bytes>,
     ) -> Self::ExecutionData {
-        let (payload, sidecar) =
-            ExecutionPayload::from_block_unchecked(block.hash(), &block.into_block());
+        let (payload, sidecar) = ExecutionPayload::from_block_unchecked_with_extras(
+            block.hash(),
+            &block.into_block(),
+            bal,
+        );
         ExecutionData { payload, sidecar }
     }
 }
@@ -107,6 +111,7 @@ pub fn try_into_block<T: Decodable2718, CS: ScrollHardforks>(
         ExecutionPayload::V1(payload) => try_payload_v1_to_block(payload, chainspec)?,
         ExecutionPayload::V2(payload) => try_payload_v2_to_block(payload, chainspec)?,
         ExecutionPayload::V3(payload) => try_payload_v3_to_block(payload, chainspec)?,
+        ExecutionPayload::V4(payload) => try_payload_v3_to_block(payload.payload_inner, chainspec)?,
     };
 
     block.header.parent_beacon_block_root = value.sidecar.parent_beacon_block_root();
@@ -171,6 +176,8 @@ fn try_payload_v1_to_block<T: Decodable2718, CS: ScrollHardforks>(
         excess_blob_gas: None,
         parent_beacon_block_root: None,
         requests_hash: None,
+        block_access_list_hash: None,
+        slot_number: None,
         extra_data: payload.extra_data,
         // Defaults
         ommers_hash: EMPTY_OMMER_ROOT_HASH,

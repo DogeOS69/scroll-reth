@@ -10,10 +10,8 @@ impl AsBytes for Nibbles {
     fn as_bytes(&self) -> [u8; 32] {
         // This is strange we are now representing the leaf key using big endian??
         let mut result = [0u8; 32];
-        for (byte_index, bytes) in self.as_slice().chunks(8).enumerate() {
-            for (bit_index, byte) in bytes.iter().enumerate() {
-                result[byte_index] |= byte << bit_index;
-            }
+        for (index, byte) in self.iter().enumerate() {
+            result[index / 8] |= byte << (index % 8);
         }
 
         result

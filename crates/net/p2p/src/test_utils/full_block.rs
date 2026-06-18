@@ -1,4 +1,5 @@
 use crate::{
+    block_access_lists::client::{BalRequirement, BlockAccessListsClient},
     bodies::client::BodiesClient,
     download::DownloadClient,
     error::PeerRequestResult,
@@ -8,13 +9,13 @@ use crate::{
 };
 use alloy_consensus::Header;
 use alloy_eips::{BlockHashOrNumber, BlockNumHash};
-use alloy_primitives::B256;
+use alloy_primitives::{map::B256Map, Bytes, B256};
 use parking_lot::Mutex;
-use reth_eth_wire_types::HeadersDirection;
+use reth_eth_wire_types::{BlockAccessLists, HeadersDirection};
 use reth_ethereum_primitives::{Block, BlockBody};
 use reth_network_peers::{PeerId, WithPeerId};
 use reth_primitives_traits::{SealedBlock, SealedHeader};
-use std::{collections::HashMap, ops::RangeInclusive, sync::Arc};
+use std::{ops::RangeInclusive, sync::Arc};
 
 /// A headers+bodies client that stores the headers and bodies in memory, with an artificial soft
 /// bodies response limit that is set to 20 by default.
@@ -22,8 +23,9 @@ use std::{collections::HashMap, ops::RangeInclusive, sync::Arc};
 /// This full block client can be [Clone]d and shared between multiple tasks.
 #[derive(Clone, Debug)]
 pub struct TestFullBlockClient {
-    headers: Arc<Mutex<HashMap<B256, Header>>>,
-    bodies: Arc<Mutex<HashMap<B256, BlockBody>>>,
+    headers: Arc<Mutex<B256Map<Header>>>,
+    bodies: Arc<Mutex<B256Map<BlockBody>>>,
+    access_lists: Arc<Mutex<B256Map<Bytes>>>,
     // soft response limit, max number of bodies to respond with
     soft_limit: usize,
 }
@@ -31,8 +33,9 @@ pub struct TestFullBlockClient {
 impl Default for TestFullBlockClient {
     fn default() -> Self {
         Self {
-            headers: Arc::new(Mutex::new(HashMap::default())),
-            bodies: Arc::new(Mutex::new(HashMap::default())),
+            headers: Arc::new(Mutex::new(B256Map::default())),
+            bodies: Arc::new(Mutex::new(B256Map::default())),
+            access_lists: Arc::new(Mutex::new(B256Map::default())),
             soft_limit: 20,
         }
     }
@@ -44,6 +47,11 @@ impl TestFullBlockClient {
         let hash = header.hash();
         self.headers.lock().insert(hash, header.unseal());
         self.bodies.lock().insert(hash, body);
+    }
+
+    /// Insert a raw block access list served for the given block hash.
+    pub fn insert_access_list(&self, hash: B256, access_list: Bytes) {
+        self.access_lists.lock().insert(hash, access_list);
     }
 
     /// Set the soft response limit.
@@ -169,4 +177,21 @@ impl BodiesClient for TestFullBlockClient {
 
 impl BlockClient for TestFullBlockClient {
     type Block = reth_ethereum_primitives::Block;
+}
+
+impl BlockAccessListsClient for TestFullBlockClient {
+    type Output = futures::future::Ready<PeerRequestResult<BlockAccessLists>>;
+
+    fn get_block_access_lists_with_priority_and_requirement(
+        &self,
+        hashes: Vec<B256>,
+        _priority: Priority,
+        _requirement: BalRequirement,
+    ) -> Self::Output {
+        let access_lists = self.access_lists.lock();
+        futures::future::ready(Ok(WithPeerId::new(
+            PeerId::random(),
+            BlockAccessLists(hashes.iter().map(|hash| access_lists.get(hash).cloned()).collect()),
+        )))
+    }
 }

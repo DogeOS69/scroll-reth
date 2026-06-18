@@ -89,6 +89,21 @@ impl SerdeBincodeCompat for alloy_consensus::Header {
     }
 }
 
+impl<T> SerdeBincodeCompat for alloy_consensus::EthereumReceipt<T>
+where
+    T: Copy + Debug + Serialize + TryFrom<u8, Error = alloy_eips::eip2718::Eip2718Error> + 'static,
+{
+    type BincodeRepr<'a> = alloy_consensus::serde_bincode_compat::EthereumReceipt<'a, T>;
+
+    fn as_repr(&self) -> Self::BincodeRepr<'_> {
+        self.into()
+    }
+
+    fn from_repr(repr: Self::BincodeRepr<'_>) -> Self {
+        repr.into()
+    }
+}
+
 /// Type alias for the [`SerdeBincodeCompat::BincodeRepr`] associated type.
 ///
 /// This provides a convenient way to refer to the bincode representation type

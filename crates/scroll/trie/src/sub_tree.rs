@@ -23,8 +23,9 @@ impl<'a> SubTreeRef<'a> {
     pub(crate) fn root(&self) -> B256 {
         let mut tree_root =
             Fr::from_repr_vartime(self.child.0).expect("child is a valid field element");
-        for bit in self.key.as_slice().iter().rev() {
-            tree_root = if *bit == 0 {
+        for index in (0..self.key.len()).rev() {
+            let bit = self.key.get(index).expect("index is in bounds");
+            tree_root = if bit == 0 {
                 hash_with_domain(&[tree_root, Fr::zero()], BRANCH_NODE_LBRT_DOMAIN)
             } else {
                 hash_with_domain(&[Fr::zero(), tree_root], BRANCH_NODE_LTRB_DOMAIN)

@@ -11,20 +11,20 @@ use reth_chainspec::{EthereumHardforks, Hardforks};
 use reth_evm::ConfigureEvm;
 use reth_node_api::{FullNodeComponents, FullNodeTypes, HeaderTy, NodeTypes};
 use reth_node_builder::rpc::{EthApiBuilder, EthApiCtx};
-use reth_provider::{BlockReader, ProviderHeader, ProviderTx};
-use reth_rpc::eth::{core::EthApiInner, DevSigner};
-use reth_rpc_convert::{RpcConvert, RpcConverter, RpcTypes, SignableTxRequest};
+use reth_provider::{BlockReader, ProviderHeader};
+use reth_rpc::eth::core::EthApiInner;
+use reth_rpc_convert::{RpcConvert, RpcConverter, RpcTypes};
 use reth_rpc_eth_api::{
     helpers::{
-        pending_block::BuildPendingEnv, AddDevSigners, EthApiSpec, EthState, LoadFee,
-        LoadPendingBlock, LoadState, SpawnBlocking, Trace,
+        pending_block::BuildPendingEnv, Call, EthApiSpec, EthState, GetBlockAccessList, LoadBlock,
+        LoadFee, LoadPendingBlock, LoadState, SpawnBlocking, Trace,
     },
     EthApiTypes, FullEthApiServer, RpcNodeCore, RpcNodeCoreExt,
 };
 use reth_rpc_eth_types::{error::FromEvmError, EthStateCache, FeeHistoryCache, GasPriceOracle};
 use reth_tasks::{
     pool::{BlockingTaskGuard, BlockingTaskPool},
-    TaskSpawner,
+    Runtime,
 };
 use scroll_alloy_network::Scroll;
 use std::{fmt, marker::PhantomData, sync::Arc};
@@ -108,14 +108,14 @@ where
 impl<N, Rpc> EthApiTypes for ScrollEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = ScrollEthApiError>,
 {
     type Error = ScrollEthApiError;
     type NetworkTypes = Rpc::Network;
     type RpcConvert = Rpc;
 
-    fn tx_resp_builder(&self) -> &Self::RpcConvert {
-        self.inner.eth_api.tx_resp_builder()
+    fn converter(&self) -> &Self::RpcConvert {
+        self.inner.eth_api.converter()
     }
 }
 
@@ -165,7 +165,7 @@ where
 impl<N, Rpc> EthApiSpec for ScrollEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = ScrollEthApiError>,
 {
     #[inline]
     fn starting_block(&self) -> U256 {
@@ -176,10 +176,10 @@ where
 impl<N, Rpc> SpawnBlocking for ScrollEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = ScrollEthApiError>,
 {
     #[inline]
-    fn io_task_spawner(&self) -> impl TaskSpawner {
+    fn io_task_spawner(&self) -> &Runtime {
         self.inner.eth_api.task_spawner()
     }
 
@@ -191,6 +191,11 @@ where
     #[inline]
     fn tracing_task_guard(&self) -> &BlockingTaskGuard {
         self.inner.eth_api.blocking_task_guard()
+    }
+
+    #[inline]
+    fn blocking_io_task_guard(&self) -> &Arc<tokio::sync::Semaphore> {
+        self.inner.eth_api.blocking_io_request_semaphore()
     }
 }
 
@@ -224,7 +229,7 @@ where
 impl<N, Rpc> LoadState for ScrollEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = ScrollEthApiError>,
     Self: LoadPendingBlock,
 {
 }
@@ -232,7 +237,7 @@ where
 impl<N, Rpc> EthState for ScrollEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = ScrollEthApiError>,
     Self: LoadPendingBlock,
 {
     #[inline]
@@ -245,20 +250,16 @@ impl<N, Rpc> Trace for ScrollEthApi<N, Rpc>
 where
     N: RpcNodeCore,
     ScrollEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = ScrollEthApiError>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = ScrollEthApiError, Evm = N::Evm>,
 {
 }
 
-impl<N, Rpc> AddDevSigners for ScrollEthApi<N, Rpc>
+impl<N, Rpc> GetBlockAccessList for ScrollEthApi<N, Rpc>
 where
+    Self: Call + LoadBlock + Trace,
     N: RpcNodeCore,
-    Rpc: RpcConvert<
-        Network: RpcTypes<TransactionRequest: SignableTxRequest<ProviderTx<N::Provider>>>,
-    >,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = ScrollEthApiError>,
 {
-    fn with_dev_accounts(&self) {
-        *self.inner.eth_api.signers().write() = DevSigner::random_signers(20)
-    }
 }
 
 impl<N: ScrollNodeCore, Rpc: RpcConvert> fmt::Debug for ScrollEthApi<N, Rpc> {
@@ -379,9 +380,13 @@ where
         Types: NodeTypes<ChainSpec: Hardforks + EthereumHardforks>,
     >,
     NetworkT: RpcTypes,
-    ScrollRpcConvert<N, NetworkT>: RpcConvert<Network = NetworkT>,
+    ScrollRpcConvert<N, NetworkT>: RpcConvert<
+        Network = NetworkT,
+        Primitives = <N::Types as NodeTypes>::Primitives,
+        Error = ScrollEthApiError,
+    >,
     ScrollEthApi<N, ScrollRpcConvert<N, NetworkT>>:
-        FullEthApiServer<Provider = N::Provider, Pool = N::Pool> + AddDevSigners,
+        FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
 {
     type EthApi = ScrollEthApi<N, ScrollRpcConvert<N, NetworkT>>;
 

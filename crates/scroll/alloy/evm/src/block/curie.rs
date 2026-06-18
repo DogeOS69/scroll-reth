@@ -17,13 +17,11 @@
 //!
 //! More details on the Curie update: <https://scroll.io/blog/compressing-the-gas-scrolls-curie-upgrade>
 
-use alloc::vec;
 use revm::{
     bytecode::Bytecode,
-    database::{states::StorageSlot, State},
-    primitives::{bytes, Bytes, U256},
-    state::AccountInfo,
-    Database,
+    primitives::{bytes, AddressMap, Bytes, U256},
+    state::{Account, AccountInfo, EvmStorageSlot, TransactionId},
+    Database, DatabaseCommit,
 };
 
 // Import L1GasPriceOracle address and slots.
@@ -53,15 +51,15 @@ pub const IS_CURIE: U256 = U256::from_limbs([1, 0, 0, 0]);
 ///    - Updates the L1 oracle contract bytecode to reflect the DA cost reduction.
 ///    - Sets the initial blob base fee, commit and blob scalar and sets the `isCurie` slot to 1
 ///      (true).
-pub(super) fn apply_curie_hard_fork<DB: Database>(state: &mut State<DB>) -> Result<(), DB::Error> {
-    let oracle = state.load_cache_account(L1_GAS_PRICE_ORACLE_ADDRESS)?;
-
+pub(super) fn apply_curie_hard_fork<DB: Database + DatabaseCommit>(
+    state: &mut DB,
+) -> Result<(), DB::Error> {
     // compute the code hash
     let bytecode = Bytecode::new_raw(CURIE_L1_GAS_PRICE_ORACLE_BYTECODE);
     let code_hash = bytecode.hash_slow();
 
     // get the old oracle account info
-    let old_oracle_info = oracle.account_info().unwrap_or_default();
+    let old_oracle_info = state.basic(L1_GAS_PRICE_ORACLE_ADDRESS)?.unwrap_or_default();
 
     // init new oracle account information
     let new_oracle_info = AccountInfo { code_hash, code: Some(bytecode), ..old_oracle_info };
@@ -70,23 +68,22 @@ pub(super) fn apply_curie_hard_fork<DB: Database>(state: &mut State<DB>) -> Resu
     let new_storage = CURIE_L1_GAS_PRICE_ORACLE_STORAGE
         .into_iter()
         .map(|(slot, present_value)| {
-            (
+            let original_value = state.storage(L1_GAS_PRICE_ORACLE_ADDRESS, slot)?;
+            Ok((
                 slot,
-                StorageSlot {
-                    present_value,
-                    previous_or_original_value: oracle.storage_slot(slot).unwrap_or_default(),
-                },
-            )
+                EvmStorageSlot::new_changed(original_value, present_value, TransactionId::ZERO),
+            ))
         })
-        .collect();
+        .collect::<Result<_, DB::Error>>()?;
 
-    // create transition for oracle new account info and storage
-    let transition = oracle.change(new_oracle_info, new_storage);
+    let mut oracle_account = Account::default();
+    oracle_account.info = new_oracle_info;
+    oracle_account.storage = new_storage;
+    oracle_account.mark_touch();
 
-    // add transition
-    if let Some(s) = state.transition_state.as_mut() {
-        s.add_transitions(vec![(L1_GAS_PRICE_ORACLE_ADDRESS, transition)])
-    }
+    let mut changes = AddressMap::default();
+    changes.insert(L1_GAS_PRICE_ORACLE_ADDRESS, oracle_account);
+    state.commit(changes);
 
     Ok(())
 }

@@ -1,6 +1,6 @@
 use crate::{
     Block, FullBlock, FullBlockBody, FullBlockHeader, FullReceipt, FullSignedTx,
-    MaybeSerdeBincodeCompat, Receipt,
+    MaybeSerdeBincodeCompat,
 };
 use core::fmt;
 
@@ -24,7 +24,7 @@ pub trait NodePrimitives:
     /// format that includes the signature and can be included in a block.
     type SignedTx: FullSignedTx;
     /// A receipt.
-    type Receipt: Receipt;
+    type Receipt: FullReceipt;
 }
 /// Helper trait that sets trait bounds on [`NodePrimitives`].
 pub trait FullNodePrimitives

@@ -32,7 +32,10 @@ use reth_ethereum_primitives::{Receipt, TransactionSigned};
 use reth_primitives_traits::{Account, Bytecode, StorageEntry};
 use reth_prune_types::{PruneCheckpoint, PruneSegment};
 use reth_stages_types::StageCheckpoint;
-use reth_trie_common::{BranchNodeCompact, StorageTrieEntry, StoredNibbles, StoredNibblesSubKey};
+use reth_trie_common::{
+    BranchNodeCompact, PackedStorageTrieEntry, PackedStoredNibbles, PackedStoredNibblesSubKey,
+    StorageTrieEntry, StoredNibbles, StoredNibblesSubKey,
+};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -92,7 +95,10 @@ pub trait TableViewer<R> {
     /// Operate on the dupsort table in a generic way.
     ///
     /// By default, the `view` function is invoked unless overridden.
-    fn view_dupsort<T: DupSort>(&self) -> Result<R, Self::Error> {
+    fn view_dupsort<T: DupSort>(&self) -> Result<R, Self::Error>
+    where
+        T::Value: reth_primitives_traits::ValueWithSubKey<SubKey = T::SubKey>,
+    {
         self.view::<T>()
     }
 }
@@ -306,7 +312,8 @@ tables! {
         type Value = HeaderHash;
     }
 
-    /// Stores the total difficulty from a block header.
+    /// Stores the total difficulty from block headers.
+    /// Note: Deprecated.
     table HeaderTerminalDifficulties {
         type Key = BlockNumber;
         type Value = CompactU256;
@@ -523,6 +530,45 @@ tables! {
         type Key = ChainStateKey;
         type Value = BlockNumber;
     }
+
+    /// Stores generic node metadata as key-value pairs.
+    /// Can store feature flags, configuration markers, and other node-specific data.
+    table Metadata {
+        type Key = String;
+        type Value = Vec<u8>;
+    }
+}
+
+/// Packed-encoding view of the [`AccountsTrie`] table.
+///
+/// Uses [`PackedStoredNibbles`] (33-byte) keys instead of [`StoredNibbles`] (65-byte).
+/// Shares the same underlying MDBX table — this is a type-level view for storage v2.
+#[derive(Debug)]
+pub struct PackedAccountsTrie;
+
+impl Table for PackedAccountsTrie {
+    const NAME: &'static str = <AccountsTrie as Table>::NAME;
+    const DUPSORT: bool = false;
+    type Key = PackedStoredNibbles;
+    type Value = BranchNodeCompact;
+}
+
+/// Packed-encoding view of the [`StoragesTrie`] table.
+///
+/// Uses [`PackedStoredNibblesSubKey`] (33-byte) subkeys instead of [`StoredNibblesSubKey`]
+/// (65-byte). Shares the same underlying MDBX table — this is a type-level view for storage v2.
+#[derive(Debug)]
+pub struct PackedStoragesTrie;
+
+impl Table for PackedStoragesTrie {
+    const NAME: &'static str = <StoragesTrie as Table>::NAME;
+    const DUPSORT: bool = true;
+    type Key = B256;
+    type Value = PackedStorageTrieEntry;
+}
+
+impl DupSort for PackedStoragesTrie {
+    type SubKey = PackedStoredNibblesSubKey;
 }
 
 /// Keys for the `ChainState` table.

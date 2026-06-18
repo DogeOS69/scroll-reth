@@ -279,7 +279,9 @@ mod op {
     use crate::Extended;
     use alloy_consensus::error::ValueError;
     use alloy_primitives::{Sealed, Signature, B256};
-    use op_alloy_consensus::{OpPooledTransaction, OpTransaction, OpTxEnvelope, TxDeposit};
+    use op_alloy_consensus::{
+        OpPooledTransaction, OpTransaction, OpTxEnvelope, TxDeposit, TxPostExec,
+    };
 
     impl<B, T> OpTransaction for Extended<B, T>
     where
@@ -297,6 +299,13 @@ mod op {
             match self {
                 Self::BuiltIn(b) => b.as_deposit(),
                 Self::Other(t) => t.as_deposit(),
+            }
+        }
+
+        fn as_post_exec(&self) -> Option<&Sealed<TxPostExec>> {
+            match self {
+                Self::BuiltIn(b) => b.as_post_exec(),
+                Self::Other(t) => t.as_post_exec(),
             }
         }
     }

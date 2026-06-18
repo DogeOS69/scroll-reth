@@ -375,16 +375,16 @@ mod compact {
 
     #[derive(reth_codecs::CompactZstd)]
     #[reth_zstd(
-        compressor = reth_zstd_compressors::RECEIPT_COMPRESSOR,
-        decompressor = reth_zstd_compressors::RECEIPT_DECOMPRESSOR
+        compressor = reth_zstd_compressors::with_receipt_compressor,
+        decompressor = reth_zstd_compressors::with_receipt_decompressor
     )]
     struct CompactScrollReceipt<'a> {
-        tx_type: ScrollTxType,
         success: bool,
         cumulative_gas_used: u64,
         #[allow(clippy::owned_cow)]
         logs: Cow<'a, Vec<Log>>,
         l1_fee: Option<U256>,
+        tx_type: ScrollTxType,
     }
 
     impl<'a> From<&'a ScrollReceipt> for CompactScrollReceipt<'a> {

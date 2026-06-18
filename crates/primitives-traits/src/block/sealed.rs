@@ -306,6 +306,80 @@ impl<B: Block> Deref for SealedBlock<B> {
     }
 }
 
+/// A sealed block with associated data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SealedBlockWith<B: Block, T> {
+    /// The sealed block.
+    block: SealedBlock<B>,
+    /// Associated data for the sealed block.
+    data: T,
+}
+
+impl<B: Block, T> SealedBlockWith<B, T> {
+    /// Creates a new sealed block with associated data.
+    #[inline]
+    pub const fn new(block: SealedBlock<B>, data: T) -> Self {
+        Self { block, data }
+    }
+
+    /// Returns the sealed block.
+    #[inline]
+    pub const fn block(&self) -> &SealedBlock<B> {
+        &self.block
+    }
+
+    /// Returns the associated data.
+    #[inline]
+    pub const fn data(&self) -> &T {
+        &self.data
+    }
+
+    /// Consumes the type and returns its components.
+    #[doc(alias = "into_parts")]
+    #[inline]
+    pub fn split(self) -> (SealedBlock<B>, T) {
+        (self.block, self.data)
+    }
+}
+
+impl<B: Block, T> SealedBlockWith<B, Option<T>> {
+    /// Creates a sealed block without associated data.
+    #[inline]
+    pub const fn from_block(block: SealedBlock<B>) -> Self {
+        Self::new(block, None)
+    }
+}
+
+impl<B: Block, T> From<(SealedBlock<B>, T)> for SealedBlockWith<B, T> {
+    #[inline]
+    fn from((block, data): (SealedBlock<B>, T)) -> Self {
+        Self::new(block, data)
+    }
+}
+
+impl<B: Block, T> From<SealedBlock<B>> for SealedBlockWith<B, Option<T>> {
+    #[inline]
+    fn from(block: SealedBlock<B>) -> Self {
+        Self::from_block(block)
+    }
+}
+
+impl<B: Block, T: InMemorySize> InMemorySize for SealedBlockWith<B, T> {
+    #[inline]
+    fn size(&self) -> usize {
+        self.block.size() + self.data.size()
+    }
+}
+
+impl<B: Block, T> Deref for SealedBlockWith<B, T> {
+    type Target = SealedBlock<B>;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        self.block()
+    }
+}
+
 impl<B: Block> Encodable for SealedBlock<B> {
     fn encode(&self, out: &mut dyn BufMut) {
         // TODO: https://github.com/paradigmxyz/reth/issues/18002

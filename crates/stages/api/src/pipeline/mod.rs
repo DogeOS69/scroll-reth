@@ -10,6 +10,7 @@ use reth_provider::{
     providers::ProviderNodeTypes, BlockHashReader, BlockNumReader, ChainStateBlockReader,
     ChainStateBlockWriter, DBProvider, DatabaseProviderFactory, ProviderFactory,
     PruneCheckpointReader, StageCheckpointReader, StageCheckpointWriter, StaticFileProviderFactory,
+    StorageSettingsCache,
 };
 use reth_prune::PrunerBuilder;
 use reth_static_file::StaticFileProducer;
@@ -261,9 +262,16 @@ impl<N: ProviderNodeTypes> Pipeline<N> {
     /// - [`StaticFileSegment::Transactions`](reth_static_file_types::StaticFileSegment::Transactions)
     ///   -> [`StageId::Bodies`]
     ///
+    /// This is a legacy storage.v1 backfill step. Storage.v2 writes directly to static files and
+    /// `RocksDB`, so there is no MDBX -> static-file migration to perform.
+    ///
     /// CAUTION: This method locks the static file producer Mutex, hence can block the thread if the
     /// lock is occupied.
     pub fn move_to_static_files(&self) -> RethResult<()> {
+        if self.provider_factory.cached_storage_settings().is_v2() {
+            return Ok(())
+        }
+
         // Copies data from database to static files
         let lowest_static_file_height =
             self.static_file_producer.lock().copy_to_static_files()?.min_block_num();
@@ -339,17 +347,21 @@ impl<N: ProviderNodeTypes> Pipeline<N> {
         self.move_to_static_files()?;
 
         if let Some(unwind_target) = maybe_unwind_target {
+            let unwind_block = unwind_target
+                .unwind_target()
+                .expect("static file consistency check only returns unwind targets");
+
             // Highly unlikely to happen, and given its destructive nature, it's better to panic
             // instead.
             assert_ne!(
-                unwind_target,
+                unwind_block,
                 0,
                 "A static file <> database inconsistency was found that would trigger an unwind to block 0"
             );
 
             info!(target: "reth::cli", unwind_target = %unwind_target, "Executing an unwind after a failed storage consistency check.");
 
-            self.unwind(unwind_target, None).inspect_err(|err| {
+            self.unwind(unwind_block, None).inspect_err(|err| {
                 error!(target: "reth::cli", unwind_target = %unwind_target, %err, "failed to run unwind")
             })?;
         }
@@ -366,13 +378,14 @@ impl<N: ProviderNodeTypes> Pipeline<N> {
         bad_block: Option<BlockNumber>,
     ) -> Result<(), PipelineError> {
         // Add validation before starting unwind
-        let provider = self.provider_factory.provider()?;
-        let latest_block = provider.last_block_number()?;
-
-        // Get the actual pruning configuration
-        let prune_modes = provider.prune_modes_ref();
-
-        let checkpoints = provider.get_prune_checkpoints()?;
+        let (latest_block, prune_modes, checkpoints) = {
+            let provider = self.provider_factory.provider()?;
+            (
+                provider.last_block_number()?,
+                provider.prune_modes_ref().clone(),
+                provider.get_prune_checkpoints()?,
+            )
+        };
         prune_modes.ensure_unwind_target_unpruned(latest_block, to, &checkpoints)?;
 
         // Unwind stages in reverse order of execution
@@ -382,7 +395,8 @@ impl<N: ProviderNodeTypes> Pipeline<N> {
         // attempt to proceed with a finalized block which has been unwinded
         let _locked_sf_producer = self.static_file_producer.lock();
 
-        let mut provider_rw = self.provider_factory.database_provider_rw()?;
+        let mut provider_rw =
+            self.provider_factory.unwind_provider_rw()?.disable_long_read_transaction_safety();
 
         for stage in unwind_pipeline {
             let stage_id = stage.id();
@@ -444,7 +458,7 @@ impl<N: ProviderNodeTypes> Pipeline<N> {
                             });
                         }
 
-                        // update finalized block if needed
+                        // update finalized and safe block if needed
                         let last_saved_finalized_block_number =
                             provider_rw.last_finalized_block_number()?;
 
@@ -458,11 +472,21 @@ impl<N: ProviderNodeTypes> Pipeline<N> {
                             ))?;
                         }
 
+                        let last_saved_safe_block_number = provider_rw.last_safe_block_number()?;
+
+                        if last_saved_safe_block_number.is_none() ||
+                            Some(checkpoint.block_number) < last_saved_safe_block_number
+                        {
+                            provider_rw.save_safe_block_number(BlockNumber::from(
+                                checkpoint.block_number,
+                            ))?;
+                        }
+
                         provider_rw.commit()?;
 
                         stage.post_unwind_commit()?;
 
-                        provider_rw = self.provider_factory.database_provider_rw()?;
+                        provider_rw = self.provider_factory.unwind_provider_rw()?;
                     }
                     Err(err) => {
                         self.event_sender.notify(PipelineEvent::Error { stage_id });
@@ -639,14 +663,18 @@ impl<N: ProviderNodeTypes> Pipeline<N> {
                     // FIXME: When handling errors, we do not commit the database transaction. This
                     // leads to the Merkle stage not clearing its checkpoint, and restarting from an
                     // invalid place.
-                    let provider_rw = self.provider_factory.database_provider_rw()?;
-                    provider_rw.save_stage_checkpoint_progress(StageId::MerkleExecute, vec![])?;
-                    provider_rw.save_stage_checkpoint(
-                        StageId::MerkleExecute,
-                        prev_checkpoint.unwrap_or_default(),
-                    )?;
+                    // Only reset MerkleExecute checkpoint if MerkleExecute itself failed
+                    if stage_id == StageId::MerkleExecute {
+                        let provider_rw = self.provider_factory.database_provider_rw()?;
+                        provider_rw
+                            .save_stage_checkpoint_progress(StageId::MerkleExecute, vec![])?;
+                        provider_rw.save_stage_checkpoint(
+                            StageId::MerkleExecute,
+                            prev_checkpoint.unwrap_or_default(),
+                        )?;
 
-                    provider_rw.commit()?;
+                        provider_rw.commit()?;
+                    }
 
                     // We unwind because of a validation error. If the unwind itself
                     // fails, we bail entirely,

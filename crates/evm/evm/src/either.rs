@@ -58,7 +58,7 @@ where
         state: F,
     ) -> Result<BlockExecutionOutput<<Self::Primitives as NodePrimitives>::Receipt>, Self::Error>
     where
-        F: FnMut(&mut revm::database::State<DB>),
+        F: FnMut(&revm::database::State<DB>),
     {
         match self {
             Self::Left(a) => a.execute_with_state_closure(block, state),
@@ -77,6 +77,13 @@ where
         match self {
             Self::Left(a) => a.size_hint(),
             Self::Right(b) => b.size_hint(),
+        }
+    }
+
+    fn take_bal(&mut self) -> Option<alloy_eip7928::BlockAccessList> {
+        match self {
+            Self::Left(a) => a.take_bal(),
+            Self::Right(b) => b.take_bal(),
         }
     }
 }

@@ -19,6 +19,7 @@ alloy-primitives.workspace = true
 
 # reth
 reth-chainspec.workspace = true
+reth-evm.workspace = true
 reth-primitives-traits.workspace = true
 reth-revm.workspace = true
 reth-storage-api.workspace = true
@@ -29,7 +30,7 @@ revm-scroll.workspace = true
 
 # reth-scroll
 reth-scroll-consensus.workspace = true
-reth-scroll-evm.workspace = true
+reth-scroll-evm = { workspace = true, features = ["std"] }
 reth-scroll-forks.workspace = true
 reth-scroll-primitives.workspace = true
 

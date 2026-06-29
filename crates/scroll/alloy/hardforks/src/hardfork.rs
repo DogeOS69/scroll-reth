@@ -26,6 +26,8 @@ hardfork!(
         Galileo,
         /// GalileoV2 <https://docs.scroll.io/en/technology/overview/scroll-upgrades/galileo-upgrade/>
         GalileoV2,
+        /// Dogeos hardfork
+        Dogeos,
     }
 );
 

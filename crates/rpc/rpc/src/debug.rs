@@ -642,6 +642,9 @@ where
         let this = self.clone();
         let block_number = block.header().number();
 
+        #[cfg(feature = "scroll")]
+        let chain_spec = self.provider().chain_spec();
+
         let (mut exec_witness, lowest_block_number) = self
             .eth_api()
             .spawn_with_state_at_block(block.parent_hash().into(), move |state_provider| {
@@ -655,8 +658,18 @@ where
                     .execute_with_state_closure(&block, |statedb: &mut State<_>| {
                         #[cfg(feature = "scroll")]
                         {
-                            use reth_scroll_evm::LoadWithdrawRoot;
+                            use reth_chainspec::Hardforks;
+                            use reth_scroll_evm::{LoadWithdrawRoot, ScrollHardfork};
+
                             withdraw_root_res = statedb.load_withdraw_root();
+
+                            if chain_spec.is_fork_active_at_timestamp(
+                                ScrollHardfork::Dogeos,
+                                block.timestamp(),
+                            ) && withdraw_root_res.is_ok()
+                            {
+                                withdraw_root_res = statedb.load_next_message_index();
+                            }
                         }
                         witness_record.record_executed_state(statedb);
                     })

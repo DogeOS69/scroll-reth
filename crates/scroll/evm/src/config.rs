@@ -186,7 +186,7 @@ where
             gas_limit: payload.payload.as_v1().gas_limit,
             basefee: payload.payload.as_v1().base_fee_per_gas.to(),
             blob_excess_gas_and_price: None,
-            slot_num: 0,
+            slot_num: payload.payload.slot_number().unwrap_or_default(),
         };
 
         Ok(EvmEnv { cfg_env, block_env })

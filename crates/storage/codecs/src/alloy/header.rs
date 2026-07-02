@@ -207,11 +207,27 @@ mod tests {
     #[test]
     fn test_extra_fields() {
         let mut header = HOLESKY_BLOCK;
-        header.extra_fields = Some(HeaderExt { requests_hash: Some(B256::random()) });
+        let requests_hash = B256::random();
+        let block_access_list_hash = B256::random();
+        let slot_number = 42;
+        header.extra_fields = Some(HeaderExt {
+            requests_hash: Some(requests_hash),
+            block_access_list_hash: Some(block_access_list_hash),
+            slot_number: Some(slot_number),
+        });
 
         let mut encoded_header = vec![];
         let len = header.to_compact(&mut encoded_header);
-        assert_eq!(header, Header::from_compact(&encoded_header, len).0);
+        let decoded_header = Header::from_compact(&encoded_header, len).0;
+        assert_eq!(decoded_header, header);
+        assert_eq!(
+            decoded_header.extra_fields,
+            Some(HeaderExt {
+                requests_hash: Some(requests_hash),
+                block_access_list_hash: Some(block_access_list_hash),
+                slot_number: Some(slot_number),
+            })
+        );
     }
 
     #[test]

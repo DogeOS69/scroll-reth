@@ -195,7 +195,7 @@ where
         if let Some(entry) = &self.cache.get(&key) {
             self.increment_by_one_precompile_cache_hits();
             if input.gas >= entry.gas_used() {
-                return entry.to_precompile_result()
+                return entry.to_precompile_result();
             }
         }
 
@@ -274,18 +274,18 @@ mod tests {
     #[test]
     fn test_precompile_cache_basic() {
         let dyn_precompile: DynPrecompile = (|_input: PrecompileInput<'_>| -> PrecompileResult {
-            Ok(PrecompileOutput { gas_used: 0, bytes: Bytes::default(), reverted: false })
+            Ok(PrecompileOutput::new(0, Bytes::default(), 0))
         })
         .into();
 
         let cache =
             CachedPrecompile::new(dyn_precompile, PrecompileCache::default(), SpecId::PRAGUE, None);
 
-        let output = PrecompileOutput {
-            gas_used: 50,
-            bytes: alloy_primitives::Bytes::copy_from_slice(b"cached_result"),
-            reverted: false,
-        };
+        let output = PrecompileOutput::new(
+            50,
+            alloy_primitives::Bytes::copy_from_slice(b"cached_result"),
+            0,
+        );
 
         let key = CacheKey::new(SpecId::PRAGUE, b"test_input".into());
         let expected = CacheEntry(output);
@@ -313,11 +313,11 @@ mod tests {
             move |input: PrecompileInput<'_>| -> PrecompileResult {
                 assert_eq!(input.data, input_data);
 
-                Ok(PrecompileOutput {
-                    gas_used: 5000,
-                    bytes: alloy_primitives::Bytes::copy_from_slice(b"output_from_precompile_1"),
-                    reverted: false,
-                })
+                Ok(PrecompileOutput::new(
+                    5000,
+                    alloy_primitives::Bytes::copy_from_slice(b"output_from_precompile_1"),
+                    0,
+                ))
             }
         })
             .into();
@@ -327,11 +327,11 @@ mod tests {
             move |input: PrecompileInput<'_>| -> PrecompileResult {
                 assert_eq!(input.data, input_data);
 
-                Ok(PrecompileOutput {
-                    gas_used: 7000,
-                    bytes: alloy_primitives::Bytes::copy_from_slice(b"output_from_precompile_2"),
-                    reverted: false,
-                })
+                Ok(PrecompileOutput::new(
+                    7000,
+                    alloy_primitives::Bytes::copy_from_slice(b"output_from_precompile_2"),
+                    0,
+                ))
             }
         })
             .into();

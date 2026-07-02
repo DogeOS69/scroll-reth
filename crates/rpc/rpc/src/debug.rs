@@ -317,7 +317,7 @@ where
                                 let frame = inspector
                                     .with_transaction_gas_limit(gas_limit)
                                     .into_geth_builder()
-                                    .geth_call_traces(call_config, res.result.gas_used());
+                                    .geth_call_traces(call_config, res.result.tx_gas_used());
                                 Ok(frame.into())
                             })
                             .await?;
@@ -378,6 +378,9 @@ where
                                     hash: None,
                                     block_hash: None,
                                     index: None,
+                                    block_timestamp: Some(
+                                        evm_env.block_env.timestamp().saturating_to(),
+                                    ),
                                 };
 
                                 let res = this.eth_api().inspect(
@@ -420,6 +423,9 @@ where
 
                         Ok(frame.into())
                     }
+                    GethDebugBuiltInTracerType::Erc7562Tracer => {
+                        Err(EthApiError::Unsupported("erc7562Tracer is not supported").into())
+                    }
                 },
                 #[cfg(not(feature = "js-tracer"))]
                 GethDebugTracerType::JsTracer(_) => {
@@ -460,7 +466,7 @@ where
                     // additional tracers
                     Err(EthApiError::Unsupported("unsupported tracer").into())
                 }
-            }
+            };
         }
 
         // default structlog tracer
@@ -476,7 +482,7 @@ where
                 Ok((res, gas_limit, inspector))
             })
             .await?;
-        let gas_used = res.result.gas_used();
+        let gas_used = res.result.tx_gas_used();
         let return_value = res.result.into_output().unwrap_or_default();
         let frame = inspector
             .with_transaction_gas_limit(tx_gas_limit)
@@ -496,7 +502,7 @@ where
         opts: Option<GethDebugTracingCallOptions>,
     ) -> Result<Vec<Vec<GethTrace>>, Eth::Error> {
         if bundles.is_empty() {
-            return Err(EthApiError::InvalidParams(String::from("bundles are empty.")).into())
+            return Err(EthApiError::InvalidParams(String::from("bundles are empty.")).into());
         }
 
         let StateContext { transaction_index, block_number } = state_context.unwrap_or_default();
@@ -650,6 +656,7 @@ where
 
                 let mut witness_record = ExecutionWitnessRecord::default();
 
+                #[cfg_attr(not(feature = "scroll"), allow(unused_mut))]
                 let mut withdraw_root_res: Result<_, reth_errors::ProviderError> = Ok(());
                 let _ = block_executor
                     .execute_with_state_closure(&block, |statedb: &mut State<_>| {
@@ -750,6 +757,7 @@ where
                 .unwrap_or_default(),
             block_hash: transaction_context.as_ref().map(|c| c.block_hash).unwrap_or_default(),
             block_number: Some(evm_env.block_env.number().saturating_to()),
+            block_timestamp: Some(evm_env.block_env.timestamp().saturating_to()),
             base_fee: Some(evm_env.block_env.basefee()),
         };
 
@@ -760,7 +768,7 @@ where
                     GethDebugBuiltInTracerType::FourByteTracer => {
                         let mut inspector = FourByteInspector::default();
                         let res = self.eth_api().inspect(db, evm_env, tx_env, &mut inspector)?;
-                        return Ok((FourByteFrame::from(&inspector).into(), res.state))
+                        return Ok((FourByteFrame::from(&inspector).into(), res.state));
                     }
                     GethDebugBuiltInTracerType::CallTracer => {
                         let call_config = tracer_config
@@ -781,9 +789,9 @@ where
 
                         let frame = inspector
                             .geth_builder()
-                            .geth_call_traces(call_config, res.result.gas_used());
+                            .geth_call_traces(call_config, res.result.tx_gas_used());
 
-                        return Ok((frame.into(), res.state))
+                        return Ok((frame.into(), res.state));
                     }
                     GethDebugBuiltInTracerType::PreStateTracer => {
                         let prestate_config = tracer_config
@@ -806,7 +814,7 @@ where
                             .geth_prestate_traces(&res, &prestate_config, db)
                             .map_err(Eth::Error::from_eth_err)?;
 
-                        return Ok((frame.into(), res.state))
+                        return Ok((frame.into(), res.state));
                     }
                     GethDebugBuiltInTracerType::NoopTracer => {
                         Ok((NoopFrame::default().into(), Default::default()))
@@ -825,7 +833,7 @@ where
                         let frame = inspector
                             .try_into_mux_frame(&res, db, tx_info)
                             .map_err(Eth::Error::from_eth_err)?;
-                        return Ok((frame.into(), res.state))
+                        return Ok((frame.into(), res.state));
                     }
                     GethDebugBuiltInTracerType::FlatCallTracer => {
                         let flat_call_config = tracer_config
@@ -845,6 +853,11 @@ where
                             .into_localized_transaction_traces(tx_info);
 
                         return Ok((frame.into(), res.state));
+                    }
+                    GethDebugBuiltInTracerType::Erc7562Tracer => {
+                        return Err(
+                            EthApiError::Unsupported("erc7562Tracer is not supported").into()
+                        )
                     }
                 },
                 #[cfg(not(feature = "js-tracer"))]
@@ -879,7 +892,7 @@ where
                     // additional tracers
                     Err(EthApiError::Unsupported("unsupported tracer").into())
                 }
-            }
+            };
         }
 
         // default structlog tracer
@@ -889,7 +902,7 @@ where
         });
         let gas_limit = tx_env.gas_limit();
         let res = self.eth_api().inspect(db, evm_env, tx_env, &mut inspector)?;
-        let gas_used = res.result.gas_used();
+        let gas_used = res.result.tx_gas_used();
         let return_value = res.result.into_output().unwrap_or_default();
         inspector.set_transaction_gas_limit(gas_limit);
         let frame = inspector.geth_builder().geth_traces(gas_used, return_value, *config);

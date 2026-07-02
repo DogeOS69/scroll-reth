@@ -132,3 +132,16 @@ impl SignableTxRequest<scroll_alloy_consensus::ScrollTxEnvelope>
         Ok(signed)
     }
 }
+
+#[cfg(feature = "scroll")]
+impl SignableTxRequest<scroll_alloy_consensus::ScrollTxEnvelope>
+    for scroll_alloy_network::ScrollNetworkTransactionRequest
+{
+    async fn try_build_and_sign(
+        self,
+        signer: impl TxSigner<Signature> + Send,
+    ) -> Result<scroll_alloy_consensus::ScrollTxEnvelope, SignTxRequestError> {
+        let request: scroll_alloy_rpc_types::ScrollTransactionRequest = self.into();
+        request.try_build_and_sign(signer).await
+    }
+}

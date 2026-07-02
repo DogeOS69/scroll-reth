@@ -75,7 +75,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
     ) -> impl Future<Output = SimulatedBlocksResult<Self::NetworkTypes, Self::Error>> + Send {
         async move {
             if payload.block_state_calls.len() > self.max_simulate_blocks() as usize {
-                return Err(EthApiError::InvalidParams("too many blocks.".to_string()).into())
+                return Err(EthApiError::InvalidParams("too many blocks.".to_string()).into());
             }
 
             let block = block.unwrap_or_default();
@@ -88,7 +88,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
             } = payload;
 
             if block_state_calls.is_empty() {
-                return Err(EthApiError::InvalidParams(String::from("calls are empty.")).into())
+                return Err(EthApiError::InvalidParams(String::from("calls are empty.")).into());
             }
 
             let base_block =
@@ -421,22 +421,22 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
             let access_list = inspector.into_access_list();
             tx_env.set_access_list(access_list.clone());
             match result.result {
-                ExecutionResult::Halt { reason, gas_used } => {
+                ExecutionResult::Halt { reason, gas, .. } => {
                     let error =
                         Some(Self::Error::from_evm_halt(reason, tx_env.gas_limit()).to_string());
                     return Ok(AccessListResult {
                         access_list,
-                        gas_used: U256::from(gas_used),
+                        gas_used: U256::from(gas.tx_gas_used()),
                         error,
-                    })
+                    });
                 }
-                ExecutionResult::Revert { output, gas_used } => {
+                ExecutionResult::Revert { output, gas, .. } => {
                     let error = Some(RevertError::new(output).to_string());
                     return Ok(AccessListResult {
                         access_list,
-                        gas_used: U256::from(gas_used),
+                        gas_used: U256::from(gas.tx_gas_used()),
                         error,
-                    })
+                    });
                 }
                 ExecutionResult::Success { .. } => {}
             };
@@ -445,17 +445,19 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
             let gas_limit = tx_env.gas_limit();
             let result = this.transact(&mut db, evm_env, tx_env)?;
             let res = match result.result {
-                ExecutionResult::Halt { reason, gas_used } => {
+                ExecutionResult::Halt { reason, gas, .. } => {
                     let error = Some(Self::Error::from_evm_halt(reason, gas_limit).to_string());
-                    AccessListResult { access_list, gas_used: U256::from(gas_used), error }
+                    AccessListResult { access_list, gas_used: U256::from(gas.tx_gas_used()), error }
                 }
-                ExecutionResult::Revert { output, gas_used } => {
+                ExecutionResult::Revert { output, gas, .. } => {
                     let error = Some(RevertError::new(output).to_string());
-                    AccessListResult { access_list, gas_used: U256::from(gas_used), error }
+                    AccessListResult { access_list, gas_used: U256::from(gas.tx_gas_used()), error }
                 }
-                ExecutionResult::Success { gas_used, .. } => {
-                    AccessListResult { access_list, gas_used: U256::from(gas_used), error: None }
-                }
+                ExecutionResult::Success { gas, .. } => AccessListResult {
+                    access_list,
+                    gas_used: U256::from(gas.tx_gas_used()),
+                    error: None,
+                },
             };
 
             Ok(res)
@@ -705,7 +707,7 @@ pub trait Call:
         for tx in transactions {
             if *tx.tx_hash() == target_tx_hash {
                 // reached the target transaction
-                break
+                break;
             }
 
             let tx_env = self.evm_config().tx_env(tx);

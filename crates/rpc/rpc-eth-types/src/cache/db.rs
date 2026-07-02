@@ -9,8 +9,8 @@ use reth_storage_api::{BytecodeReader, HashedPostStateProvider, StateProvider};
 use reth_trie::{HashedStorage, MultiProofTargets};
 use revm::{
     database::{BundleState, CacheDB},
-    primitives::HashMap,
-    state::{AccountInfo, Bytecode},
+    primitives::AddressMap,
+    state::{Account, AccountInfo, Bytecode},
     Database, DatabaseCommit,
 };
 
@@ -230,7 +230,7 @@ impl<'a> DatabaseRef for StateCacheDbRefMutWrapper<'a, '_> {
 }
 
 impl DatabaseCommit for StateCacheDbRefMutWrapper<'_, '_> {
-    fn commit(&mut self, changes: HashMap<Address, revm::state::Account>) {
+    fn commit(&mut self, changes: AddressMap<Account>) {
         self.0.commit(changes)
     }
 }

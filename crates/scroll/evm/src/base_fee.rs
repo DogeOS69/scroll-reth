@@ -172,8 +172,7 @@ mod tests {
     fn test_should_return_correct_base_fee() -> Result<(), Box<dyn core::error::Error>> {
         // init the state db.
         let db = EmptyDB::new();
-        let mut state =
-            State::builder().with_database(db).with_bundle_update().without_state_clear().build();
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
 
         // init the provider and parent header.
         let base_fee_provider = ScrollBaseFeeProvider::new(SCROLL_MAINNET.clone());

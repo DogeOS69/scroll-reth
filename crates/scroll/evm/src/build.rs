@@ -84,6 +84,8 @@ where
             parent_beacon_block_root: None,
             blob_gas_used: None,
             excess_blob_gas: None,
+            block_access_list_hash: None,
+            slot_number: None,
             requests_hash: None,
         };
 

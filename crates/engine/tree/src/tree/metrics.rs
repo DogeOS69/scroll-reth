@@ -1,9 +1,6 @@
 use crate::tree::MeteredStateHook;
 use alloy_consensus::transaction::TxHashRef;
-use alloy_evm::{
-    block::{BlockExecutor, ExecutableTx},
-    Evm,
-};
+use alloy_evm::{block::BlockExecutor, Evm, RecoveredTx, ToTxEnv};
 use core::borrow::BorrowMut;
 use reth_errors::BlockExecutionError;
 use reth_evm::{metrics::ExecutorMetrics, OnStateHook};
@@ -57,33 +54,44 @@ impl EngineApiMetrics {
     ///
     /// This method updates metrics for execution time, gas usage, and the number
     /// of accounts, storage slots and bytecodes loaded and updated.
-    pub(crate) fn execute_metered<E, DB>(
+    pub(crate) fn execute_metered<E, DB, Tx>(
         &self,
-        executor: E,
-        transactions: impl Iterator<Item = Result<impl ExecutableTx<E>, BlockExecutionError>>,
+        mut executor: E,
+        transactions: impl Iterator<Item = Result<Tx, BlockExecutionError>>,
         state_hook: Box<dyn OnStateHook>,
     ) -> Result<BlockExecutionOutput<E::Receipt>, BlockExecutionError>
     where
         DB: alloy_evm::Database,
         E: BlockExecutor<Evm: Evm<DB: BorrowMut<State<DB>>>, Transaction: SignedTransaction>,
+        Tx: ToTxEnv<<E::Evm as Evm>::Tx> + RecoveredTx<E::Transaction>,
     {
         // clone here is cheap, all the metrics are Option<Arc<_>>. additionally
         // they are globally registered so that the data recorded in the hook will
         // be accessible.
         let wrapper = MeteredStateHook { metrics: self.executor.clone(), inner_hook: state_hook };
-
-        let mut executor = executor.with_state_hook(Some(Box::new(wrapper)));
+        executor.evm_mut().db_mut().borrow_mut().set_state_hook(Some(Box::new(wrapper)));
 
         let f = || {
-            executor.apply_pre_execution_changes()?;
-            for tx in transactions {
-                let tx = tx?;
-                let span =
-                    debug_span!(target: "engine::tree", "execute_tx", tx_hash=?tx.tx().tx_hash());
-                let _enter = span.enter();
-                trace!(target: "engine::tree", "Executing transaction");
-                executor.execute_transaction(tx)?;
-            }
+            let execution_result: Result<(), BlockExecutionError> = (|| {
+                executor.apply_pre_execution_changes()?;
+                for tx in transactions {
+                    let tx = tx?;
+                    let span = debug_span!(
+                        target: "engine::tree",
+                        "execute_tx",
+                        tx_hash = ?tx.tx().tx_hash()
+                    );
+                    let _enter = span.enter();
+                    trace!(target: "engine::tree", "Executing transaction");
+                    executor.execute_transaction(&tx)?;
+                }
+
+                Ok(())
+            })();
+
+            executor.evm_mut().db_mut().borrow_mut().set_state_hook(None);
+
+            execution_result?;
             executor.finish().map(|(evm, result)| (evm.into_db(), result))
         };
 
@@ -215,7 +223,10 @@ pub(crate) struct BlockBufferMetrics {
 mod tests {
     use super::*;
     use alloy_eips::eip7685::Requests;
-    use alloy_evm::block::StateChangeSource;
+    use alloy_evm::{
+        block::{ExecutableTx, GasOutput},
+        eth::EthTxResult,
+    };
     use alloy_primitives::{B256, U256};
     use metrics_util::debugging::{DebuggingRecorder, Snapshotter};
     use reth_ethereum_primitives::{Receipt, TransactionSigned};
@@ -223,11 +234,14 @@ mod tests {
     use reth_execution_types::BlockExecutionResult;
     use reth_primitives_traits::RecoveredBlock;
     use revm::{
-        context::result::{ExecutionResult, Output, ResultAndState, SuccessReason},
+        context::result::{ExecutionResult, Output, ResultAndState, ResultGas, SuccessReason},
         database::State,
         database_interface::EmptyDB,
         inspector::NoOpInspector,
-        state::{Account, AccountInfo, AccountStatus, EvmState, EvmStorage, EvmStorageSlot},
+        state::{
+            Account, AccountInfo, AccountStatus, EvmState, EvmStorage, EvmStorageSlot,
+            TransactionId,
+        },
         Context, MainBuilder, MainContext,
     };
     use revm_primitives::Bytes;
@@ -236,12 +250,20 @@ mod tests {
     /// A simple mock executor for testing that doesn't require complex EVM setup
     struct MockExecutor {
         state: EvmState,
-        hook: Option<Box<dyn OnStateHook>>,
+        evm: MockEvm,
+        receipts: Vec<Receipt>,
     }
 
     impl MockExecutor {
         fn new(state: EvmState) -> Self {
-            Self { state, hook: None }
+            let db =
+                State::builder().with_database(EmptyDB::default()).with_bundle_update().build();
+            let evm = EthEvm::new(
+                Context::mainnet().with_db(db).build_mainnet_with_inspector(NoOpInspector {}),
+                false,
+            );
+
+            Self { state, evm, receipts: Vec::new() }
         }
     }
 
@@ -252,6 +274,7 @@ mod tests {
         type Transaction = TransactionSigned;
         type Receipt = Receipt;
         type Evm = MockEvm;
+        type Result = EthTxResult<<Self::Evm as Evm>::HaltReason, u8>;
 
         fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
             Ok(())
@@ -260,52 +283,31 @@ mod tests {
         fn execute_transaction_without_commit(
             &mut self,
             _tx: impl ExecutableTx<Self>,
-        ) -> Result<ResultAndState<<Self::Evm as Evm>::HaltReason>, BlockExecutionError> {
-            // Call hook with our mock state for each transaction
-            if let Some(hook) = self.hook.as_mut() {
-                hook.on_state(StateChangeSource::Transaction(0), &self.state);
-            }
-
-            Ok(ResultAndState::new(
-                ExecutionResult::Success {
-                    reason: SuccessReason::Return,
-                    gas_used: 1000, // Mock gas used
-                    gas_refunded: 0,
-                    logs: vec![],
-                    output: Output::Call(Bytes::from(vec![])),
-                },
-                Default::default(),
-            ))
+        ) -> Result<Self::Result, BlockExecutionError> {
+            Ok(EthTxResult {
+                result: ResultAndState::new(
+                    ExecutionResult::Success {
+                        reason: SuccessReason::Return,
+                        gas: ResultGas::new_with_state_gas(1000, 0, 0, 0),
+                        logs: vec![],
+                        output: Output::Call(Bytes::from(vec![])),
+                    },
+                    core::mem::take(&mut self.state),
+                ),
+                blob_gas_used: 0,
+                tx_type: 0,
+            })
         }
 
-        fn commit_transaction(
-            &mut self,
-            _output: ResultAndState<<Self::Evm as Evm>::HaltReason>,
-            _tx: impl ExecutableTx<Self>,
-        ) -> Result<u64, BlockExecutionError> {
-            Ok(1000)
+        fn commit_transaction(&mut self, output: Self::Result) -> GasOutput {
+            revm::DatabaseCommit::commit(self.evm.db_mut(), output.result.state);
+            GasOutput::new(1000)
         }
 
         fn finish(
             self,
         ) -> Result<(Self::Evm, BlockExecutionResult<Self::Receipt>), BlockExecutionError> {
-            let Self { hook, state, .. } = self;
-
-            // Call hook with our mock state
-            if let Some(mut hook) = hook {
-                hook.on_state(StateChangeSource::Transaction(0), &state);
-            }
-
-            // Create a mock EVM
-            let db = State::builder()
-                .with_database(EmptyDB::default())
-                .with_bundle_update()
-                .without_state_clear()
-                .build();
-            let evm = EthEvm::new(
-                Context::mainnet().with_db(db).build_mainnet_with_inspector(NoOpInspector {}),
-                false,
-            );
+            let Self { evm, .. } = self;
 
             // Return successful result like the original tests
             Ok((
@@ -319,16 +321,16 @@ mod tests {
             ))
         }
 
-        fn set_state_hook(&mut self, hook: Option<Box<dyn OnStateHook>>) {
-            self.hook = hook;
-        }
-
         fn evm(&self) -> &Self::Evm {
-            panic!("Mock executor evm() not implemented")
+            &self.evm
         }
 
         fn evm_mut(&mut self) -> &mut Self::Evm {
-            panic!("Mock executor evm_mut() not implemented")
+            &mut self.evm
+        }
+
+        fn receipts(&self) -> &[Self::Receipt] {
+            &self.receipts
         }
     }
 
@@ -338,7 +340,7 @@ mod tests {
     }
 
     impl OnStateHook for ChannelStateHook {
-        fn on_state(&mut self, _source: StateChangeSource, _state: &EvmState) {
+        fn on_state(&mut self, _state: EvmState) {
             let _ = self.sender.send(self.output);
         }
     }
@@ -363,7 +365,7 @@ mod tests {
         let executor = MockExecutor::new(state);
 
         // This will fail to create the EVM but should still call the hook
-        let _result = metrics.execute_metered::<_, EmptyDB>(
+        let _result = metrics.execute_metered::<_, EmptyDB, _>(
             executor,
             input.clone_transactions_recovered().map(Ok::<_, BlockExecutionError>),
             state_hook,
@@ -397,29 +399,31 @@ mod tests {
         // Create a state with some data
         let state = {
             let mut state = EvmState::default();
-            let storage =
-                EvmStorage::from_iter([(U256::from(1), EvmStorageSlot::new(U256::from(2), 0))]);
-            state.insert(
-                Default::default(),
-                Account {
-                    info: AccountInfo {
-                        balance: U256::from(100),
-                        nonce: 10,
-                        code_hash: B256::random(),
-                        code: Default::default(),
-                    },
-                    storage,
-                    status: AccountStatus::default(),
-                    transaction_id: 0,
-                },
-            );
+            let storage = EvmStorage::from_iter([(
+                U256::from(1),
+                EvmStorageSlot::new(U256::from(2), TransactionId::ZERO),
+            )]);
+            state.insert(Default::default(), {
+                let mut account = Account::default();
+                account.info = AccountInfo {
+                    balance: U256::from(100),
+                    nonce: 10,
+                    code_hash: B256::random(),
+                    code: Default::default(),
+                    account_id: None,
+                };
+                account.storage = storage;
+                account.status = AccountStatus::default();
+                account.transaction_id = TransactionId::ZERO;
+                account
+            });
             state
         };
 
         let executor = MockExecutor::new(state);
 
         // Execute (will fail but should still update some metrics)
-        let _result = metrics.execute_metered::<_, EmptyDB>(
+        let _result = metrics.execute_metered::<_, EmptyDB, _>(
             executor,
             input.clone_transactions_recovered().map(Ok::<_, BlockExecutionError>),
             state_hook,

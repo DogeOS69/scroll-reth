@@ -1,7 +1,6 @@
 //! Multiproof task related functionality.
 
 use crate::tree::payload_processor::executor::WorkloadExecutor;
-use alloy_evm::block::StateChangeSource;
 use alloy_primitives::{
     keccak256,
     map::{B256Set, HashSet},
@@ -97,8 +96,8 @@ impl MultiProofConfig {
 pub(super) enum MultiProofMessage {
     /// Prefetch proof targets
     PrefetchProofs(MultiProofTargets),
-    /// New state update from transaction execution with its source
-    StateUpdate(StateChangeSource, EvmState),
+    /// New state update from transaction execution.
+    StateUpdate(EvmState),
     /// State update that can be applied to the sparse trie without any new proofs.
     ///
     /// It can be the case when all accounts and storage slots from the state update were already
@@ -159,7 +158,7 @@ impl ProofSequencer {
 
         // return early if we don't have the next expected proof
         if !self.pending_proofs.contains_key(&self.next_to_deliver) {
-            return Vec::new()
+            return Vec::new();
         }
 
         let mut consecutive_proofs = Vec::with_capacity(self.pending_proofs.len());
@@ -291,7 +290,6 @@ impl From<MultiproofInput> for PendingMultiproofTask {
 #[derive(Debug)]
 struct StorageMultiproofInput {
     config: MultiProofConfig,
-    source: Option<StateChangeSource>,
     hashed_state_update: HashedPostState,
     hashed_address: B256,
     proof_targets: B256Set,
@@ -314,7 +312,6 @@ impl StorageMultiproofInput {
 #[derive(Debug)]
 struct MultiproofInput {
     config: MultiProofConfig,
-    source: Option<StateChangeSource>,
     hashed_state_update: HashedPostState,
     proof_targets: MultiProofTargets,
     proof_sequence_number: u64,
@@ -397,7 +394,7 @@ impl MultiproofManager {
                 "No proof targets, sending empty multiproof back immediately"
             );
             input.send_empty_proof();
-            return
+            return;
         }
 
         if self.is_full() {
@@ -438,7 +435,6 @@ impl MultiproofManager {
     fn spawn_storage_proof(&mut self, storage_multiproof_input: StorageMultiproofInput) {
         let StorageMultiproofInput {
             config,
-            source,
             hashed_state_update,
             hashed_address,
             proof_targets,
@@ -476,7 +472,6 @@ impl MultiproofManager {
                 target: "engine::root",
                 proof_sequence_number,
                 ?elapsed,
-                ?source,
                 storage_targets,
                 "Storage multiproofs calculated",
             );
@@ -512,7 +507,6 @@ impl MultiproofManager {
     fn spawn_multiproof(&mut self, multiproof_input: MultiproofInput) {
         let MultiproofInput {
             config,
-            source,
             hashed_state_update,
             proof_targets,
             proof_sequence_number,
@@ -532,7 +526,6 @@ impl MultiproofManager {
                 ?proof_targets,
                 account_targets,
                 storage_targets,
-                ?source,
                 "Starting multiproof calculation",
             );
 
@@ -568,7 +561,6 @@ impl MultiproofManager {
                 target: "engine::root",
                 proof_sequence_number,
                 ?elapsed,
-                ?source,
                 account_targets,
                 storage_targets,
                 "Multiproof calculated",
@@ -743,7 +735,6 @@ impl MultiProofTask {
             self.multiproof_manager.spawn_or_queue(
                 MultiproofInput {
                     config: self.config.clone(),
-                    source: None,
                     hashed_state_update: Default::default(),
                     proof_targets,
                     proof_sequence_number: self.proof_sequencer.next_sequence(),
@@ -821,7 +812,7 @@ impl MultiProofTask {
             let Some(fetched_storage) = self.fetched_proof_targets.get(hashed_address) else {
                 // this means the account has not been fetched yet, so we must fetch everything
                 // associated with this account
-                continue
+                continue;
             };
 
             let prev_target_storage_len = target_storage.len();
@@ -844,7 +835,7 @@ impl MultiProofTask {
     /// Handles state updates.
     ///
     /// Returns a number of proofs that were spawned.
-    fn on_state_update(&mut self, source: StateChangeSource, update: EvmState) -> u64 {
+    fn on_state_update(&mut self, update: EvmState) -> u64 {
         let hashed_state_update = evm_state_to_hashed_post_state(update);
 
         // Update removed keys based on the state update.
@@ -886,7 +877,6 @@ impl MultiProofTask {
             self.multiproof_manager.spawn_or_queue(
                 MultiproofInput {
                     config: self.config.clone(),
-                    source: Some(source),
                     hashed_state_update,
                     proof_targets,
                     proof_sequence_number: self.proof_sequencer.next_sequence(),
@@ -1016,7 +1006,7 @@ impl MultiProofTask {
                             "Prefetching proofs"
                         );
                     }
-                    MultiProofMessage::StateUpdate(source, update) => {
+                    MultiProofMessage::StateUpdate(update) => {
                         trace!(target: "engine::root", "processing MultiProofMessage::StateUpdate");
                         if first_update_time.is_none() {
                             // record the wait time
@@ -1028,10 +1018,9 @@ impl MultiProofTask {
                         }
 
                         let len = update.len();
-                        state_update_proofs_requested += self.on_state_update(source, update);
+                        state_update_proofs_requested += self.on_state_update(update);
                         debug!(
                             target: "engine::root",
-                            ?source,
                             len,
                             ?state_update_proofs_requested,
                             "Received new state update"
@@ -1051,7 +1040,7 @@ impl MultiProofTask {
                                 target: "engine::root",
                                 "State updates finished and all proofs processed, ending calculation"
                             );
-                            break
+                            break;
                         }
                     }
                     MultiProofMessage::EmptyProof { sequence_number, state } => {
@@ -1076,7 +1065,7 @@ impl MultiProofTask {
                                 target: "engine::root",
                                 "State updates finished and all proofs processed, ending calculation"
                             );
-                            break
+                            break;
                         }
                     }
                     MultiProofMessage::ProofCalculated(proof_calculated) => {
@@ -1115,7 +1104,7 @@ impl MultiProofTask {
                             debug!(
                                 target: "engine::root",
                                 "State updates finished and all proofs processed, ending calculation");
-                            break
+                            break;
                         }
                     }
                     MultiProofMessage::ProofCalculationError(err) => {
@@ -1124,14 +1113,14 @@ impl MultiProofTask {
                             ?err,
                             "proof calculation error"
                         );
-                        return
+                        return;
                     }
                 },
                 Err(_) => {
                     // this means our internal message channel is closed, which shouldn't happen
                     // in normal operation since we hold both ends
                     error!(target: "engine::root", "Internal message channel closed unexpectedly");
-                    return
+                    return;
                 }
             }
         }
@@ -1185,8 +1174,8 @@ fn get_proof_targets(
             .storage
             .keys()
             .filter(|slot| {
-                !fetched.is_some_and(|f| f.contains(*slot)) ||
-                    storage_added_removed_keys.is_some_and(|k| k.is_removed(slot))
+                !fetched.is_some_and(|f| f.contains(*slot))
+                    || storage_added_removed_keys.is_some_and(|k| k.is_removed(slot))
             })
             .peekable();
 

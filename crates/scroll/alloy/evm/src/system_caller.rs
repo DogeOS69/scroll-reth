@@ -82,7 +82,9 @@ fn transact_blockhashes_contract_call<Halt>(
     ) {
         Ok(res) => res,
         Err(e) => {
-            return Err(BlockValidationError::BlockHashContractCall { message: e.to_string() }.into())
+            return Err(
+                BlockValidationError::BlockHashContractCall { message: e.to_string() }.into()
+            )
         }
     };
 
@@ -121,8 +123,7 @@ mod tests {
 
         // initiate db with system contract.
         let db = EmptyDBTyped::<Infallible>::new();
-        let mut state =
-            State::builder().with_database(db).with_bundle_update().without_state_clear().build();
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
         state.insert_account(
             HISTORY_STORAGE_ADDRESS,
             AccountInfo {
@@ -168,8 +169,7 @@ mod tests {
 
         // initiate db with system contract.
         let db = EmptyDBTyped::<Infallible>::new();
-        let mut state =
-            State::builder().with_database(db).with_bundle_update().without_state_clear().build();
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
         state.insert_account(
             HISTORY_STORAGE_ADDRESS,
             AccountInfo {

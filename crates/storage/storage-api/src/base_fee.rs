@@ -40,10 +40,9 @@ pub trait StorageProvider {
 }
 
 impl<DB: Database> StorageProvider for State<DB> {
-    type Error = DB::Error;
+    type Error = <State<DB> as Database>::Error;
 
     fn storage(&mut self, address: Address, key: U256) -> Result<U256, Self::Error> {
-        let _ = self.load_cache_account(address)?;
         Database::storage(self, address, key)
     }
 }

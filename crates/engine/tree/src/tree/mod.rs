@@ -7,7 +7,6 @@ use crate::{
 };
 use alloy_consensus::BlockHeader;
 use alloy_eips::{eip1898::BlockWithParent, merge::EPOCH_SLOTS, BlockNumHash, NumHash};
-use alloy_evm::block::StateChangeSource;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{
     ForkchoiceState, PayloadStatus, PayloadStatusEnum, PayloadValidationError,
@@ -219,7 +218,7 @@ struct MeteredStateHook {
 }
 
 impl OnStateHook for MeteredStateHook {
-    fn on_state(&mut self, source: StateChangeSource, state: &EvmState) {
+    fn on_state(&mut self, state: EvmState) {
         // Update the metrics for the number of accounts, storage slots and bytecodes loaded
         let accounts = state.keys().len();
         let storage_slots = state.values().map(|account| account.storage.len()).sum::<usize>();
@@ -230,7 +229,7 @@ impl OnStateHook for MeteredStateHook {
         self.metrics.bytecodes_loaded_histogram.record(bytecodes as f64);
 
         // Call the original state hook
-        self.inner_hook.on_state(source, state);
+        self.inner_hook.on_state(state);
     }
 }
 
@@ -432,7 +431,7 @@ where
                     debug!(target: "engine::tree", %msg, "received new engine message");
                     if let Err(fatal) = self.on_engine_message(msg) {
                         error!(target: "engine::tree", %fatal, "insert block fatal error");
-                        return
+                        return;
                     }
                 }
                 Ok(None) => {
@@ -440,13 +439,13 @@ where
                 }
                 Err(_err) => {
                     error!(target: "engine::tree", "Engine channel disconnected");
-                    return
+                    return;
                 }
             }
 
             if let Err(err) = self.advance_persistence() {
                 error!(target: "engine::tree", %err, "Advancing persistence failed");
-                return
+                return;
             }
         }
     }
@@ -462,7 +461,7 @@ where
     ) -> Result<Option<TreeEvent>, InsertBlockFatalError> {
         if blocks.is_empty() {
             // nothing to execute
-            return Ok(None)
+            return Ok(None);
         }
 
         trace!(target: "engine::tree", block_count = %blocks.len(), "received downloaded blocks");
@@ -473,7 +472,7 @@ where
                 self.on_tree_event(event)?;
                 if needs_backfill {
                     // can exit early if backfill is needed
-                    return Ok(None)
+                    return Ok(None);
                 }
             }
         }
@@ -602,8 +601,8 @@ where
                         latest_valid_hash = Some(block_hash);
                         PayloadStatusEnum::Valid
                     }
-                    InsertPayloadOk::Inserted(BlockStatus::Disconnected { .. }) |
-                    InsertPayloadOk::AlreadySeen(BlockStatus::Disconnected { .. }) => {
+                    InsertPayloadOk::Inserted(BlockStatus::Disconnected { .. })
+                    | InsertPayloadOk::AlreadySeen(BlockStatus::Disconnected { .. }) => {
                         // not known to be invalid, but we don't know anything else
                         PayloadStatusEnum::Syncing
                     }
@@ -658,7 +657,7 @@ where
         let Some(new_head_block) = self.state.tree_state.blocks_by_hash.get(&new_head) else {
             debug!(target: "engine::tree", new_head=?new_head, "New head block not found in inmemory tree state");
             self.metrics.engine.executed_new_block_cache_miss.increment(1);
-            return Ok(None)
+            return Ok(None);
         };
 
         let new_head_number = new_head_block.recovered_block().number();
@@ -682,7 +681,7 @@ where
                 warn!(target: "engine::tree", current_hash=?current_hash, "Sidechain block not found in TreeState");
                 // This should never happen as we're walking back a chain that should connect to
                 // the canonical chain
-                return Ok(None)
+                return Ok(None);
             }
         }
 
@@ -692,7 +691,7 @@ where
             new_chain.reverse();
 
             // Simple extension of the current chain
-            return Ok(Some(NewCanonicalChain::Commit { new: new_chain }))
+            return Ok(Some(NewCanonicalChain::Commit { new: new_chain }));
         }
 
         // We have a reorg. Walk back both chains to find the fork point.
@@ -709,7 +708,7 @@ where
             } else {
                 // This shouldn't happen as we're walking back the canonical chain
                 warn!(target: "engine::tree", current_hash=?old_hash, "Canonical block not found in TreeState");
-                return Ok(None)
+                return Ok(None);
             }
         }
 
@@ -725,7 +724,7 @@ where
             } else {
                 // This shouldn't happen as we're walking back the canonical chain
                 warn!(target: "engine::tree", current_hash=?old_hash, "Canonical block not found in TreeState");
-                return Ok(None)
+                return Ok(None);
             }
 
             if let Some(block) = self.state.tree_state.executed_block_by_hash(current_hash).cloned()
@@ -735,7 +734,7 @@ where
             } else {
                 // This shouldn't happen as we've already walked this path
                 warn!(target: "engine::tree", invalid_hash=?current_hash, "New chain block not found in TreeState");
-                return Ok(None)
+                return Ok(None);
             }
         }
         new_chain.reverse();
@@ -951,11 +950,11 @@ where
         let mut current_block = target;
         loop {
             if current_block.block.hash == canonical_head.hash {
-                return Ok(false)
+                return Ok(false);
             }
             // We already passed the canonical head
             if current_block.block.number <= canonical_head.number {
-                break
+                break;
             }
             current_hash = current_block.parent;
 
@@ -965,12 +964,12 @@ where
 
         // verify that the given hash is not already part of canonical chain stored in memory
         if self.canonical_in_memory_state.header_by_hash(target_hash).is_some() {
-            return Ok(false)
+            return Ok(false);
         }
 
         // verify that the given hash is not already part of persisted canonical chain
         if self.provider.block_number(target_hash)?.is_some() {
-            return Ok(false)
+            return Ok(false);
         }
 
         Ok(true)
@@ -980,19 +979,19 @@ where
     fn persisting_kind_for(&self, block: BlockWithParent) -> PersistingKind {
         // Check that we're currently persisting.
         let Some(action) = self.persistence_state.current_action() else {
-            return PersistingKind::NotPersisting
+            return PersistingKind::NotPersisting;
         };
         // Check that the persistince action is saving blocks, not removing them.
         let CurrentPersistenceAction::SavingBlocks { highest } = action else {
-            return PersistingKind::PersistingNotDescendant
+            return PersistingKind::PersistingNotDescendant;
         };
 
         // The block being validated can only be a descendant if its number is higher than
         // the highest block persisting. Otherwise, it's likely a fork of a lower block.
-        if block.block.number > highest.number &&
-            self.state.tree_state.is_descendant(*highest, block)
+        if block.block.number > highest.number
+            && self.state.tree_state.is_descendant(*highest, block)
         {
-            return PersistingKind::PersistingDescendant
+            return PersistingKind::PersistingDescendant;
         }
 
         // In all other cases, the block is not a descendant.
@@ -1159,8 +1158,8 @@ where
 
             // For OpStack, or if explicitly configured, the proposers are allowed to reorg their
             // own chain at will, so we need to always trigger a new payload job if requested.
-            if self.engine_kind.is_opstack() ||
-                self.config.always_process_payload_attributes_on_canonical_head()
+            if self.engine_kind.is_opstack()
+                || self.config.always_process_payload_attributes_on_canonical_head()
             {
                 if let Some(attr) = attrs {
                     debug!(target: "engine::tree", head = canonical_header.number(), "handling payload attributes for canonical head");
@@ -1308,7 +1307,7 @@ where
     fn persist_blocks(&mut self, blocks_to_persist: Vec<ExecutedBlockWithTrieUpdates<N>>) {
         if blocks_to_persist.is_empty() {
             debug!(target: "engine::tree", "Returned empty set of blocks to persist");
-            return
+            return;
         }
 
         // NOTE: checked non-empty above
@@ -1348,7 +1347,7 @@ where
                         // if this happened, then we persisted no blocks because we sent an
                         // empty vec of blocks
                         warn!(target: "engine::tree", "Persistence task completed but did not persist any blocks");
-                        return Ok(())
+                        return Ok(());
                     };
 
                     debug!(target: "engine::tree", ?last_persisted_block_hash, ?last_persisted_block_number, "Finished persisting, calling finish");
@@ -1396,7 +1395,7 @@ where
                         let block_num_hash = block.recovered_block().num_hash();
                         if block_num_hash.number <= self.state.tree_state.canonical_block_number() {
                             // outdated block that can be skipped
-                            return Ok(())
+                            return Ok(());
                         }
 
                         debug!(target: "engine::tree", block=?block_num_hash, "inserting already executed block");
@@ -1404,8 +1403,8 @@ where
 
                         // if the parent is the canonical head, we can insert the block as the
                         // pending block
-                        if self.state.tree_state.canonical_block_hash() ==
-                            block.recovered_block().parent_hash()
+                        if self.state.tree_state.canonical_block_hash()
+                            == block.recovered_block().parent_hash()
                         {
                             debug!(target: "engine::tree", pending=?block_num_hash, "updating pending block");
                             self.canonical_in_memory_state.set_pending_block(block.clone());
@@ -1536,7 +1535,7 @@ where
             .map(|hash| BlockNumHash { hash, number: backfill_height })
         else {
             debug!(target: "engine::tree", ?ctrl, "Backfill block not found");
-            return Ok(())
+            return Ok(());
         };
 
         if ctrl.is_unwind() {
@@ -1574,11 +1573,11 @@ where
         // the backfill height
         let Some(sync_target_state) = self.state.forkchoice_state_tracker.sync_target_state()
         else {
-            return Ok(())
+            return Ok(());
         };
         if sync_target_state.finalized_block_hash.is_zero() {
             // no finalized block, can't check distance
-            return Ok(())
+            return Ok(());
         }
         // get the block number of the finalized block, if we have it
         let newest_finalized = self
@@ -1603,7 +1602,7 @@ where
             self.emit_event(EngineApiEvent::BackfillAction(BackfillAction::Start(
                 backfill_target.into(),
             )));
-            return Ok(())
+            return Ok(());
         };
 
         // try to close the gap by executing buffered blocks that are child blocks of the new head
@@ -1666,7 +1665,7 @@ where
                 // backfill sync and persisting data are mutually exclusive, so we can't start
                 // backfill while we're still persisting
                 debug!(target: "engine::tree", "skipping backfill file while persistence task is active");
-                return
+                return;
             }
 
             self.backfill_sync_state = BackfillSyncState::Pending;
@@ -1685,12 +1684,12 @@ where
     pub const fn should_persist(&self) -> bool {
         if !self.backfill_sync_state.is_idle() {
             // can't persist if backfill is running
-            return false
+            return false;
         }
 
         let min_block = self.persistence_state.last_persisted_block.number;
-        self.state.tree_state.canonical_block_number().saturating_sub(min_block) >
-            self.config.persistence_threshold()
+        self.state.tree_state.canonical_block_number().saturating_sub(min_block)
+            > self.config.persistence_threshold()
     }
 
     /// Returns a batch of consecutive canonical blocks to persist in the range
@@ -1757,7 +1756,7 @@ where
         // Calculate missing trie updates
         for block in &mut blocks_to_persist {
             if block.trie.is_present() {
-                continue
+                continue;
             }
 
             debug!(
@@ -1811,7 +1810,7 @@ where
         // state.
         if let Some(remove_above) = self.find_disk_reorg()? {
             self.remove_blocks(remove_above);
-            return Ok(())
+            return Ok(());
         }
 
         let finalized = self.state.forkchoice_state_tracker.last_valid_finalized();
@@ -1834,7 +1833,7 @@ where
         trace!(target: "engine::tree", ?hash, "Fetching executed block by hash");
         // check memory first
         if let Some(block) = self.state.tree_state.executed_block_by_hash(hash) {
-            return Ok(Some(block.block.clone()))
+            return Ok(Some(block.block.clone()));
         }
 
         let (block, senders) = self
@@ -1900,7 +1899,7 @@ where
     ) -> ProviderResult<Option<B256>> {
         // Check if parent exists in side chain or in canonical chain.
         if self.sealed_header_by_hash(parent_hash)?.is_some() {
-            return Ok(Some(parent_hash))
+            return Ok(Some(parent_hash));
         }
 
         // iterate over ancestors in the invalid cache
@@ -1914,7 +1913,7 @@ where
             // If current_header is None, then the current_hash does not have an invalid
             // ancestor in the cache, check its presence in blockchain tree
             if current_block.is_none() && self.sealed_header_by_hash(current_hash)?.is_some() {
-                return Ok(Some(current_hash))
+                return Ok(Some(current_hash));
             }
         }
         Ok(None)
@@ -1926,8 +1925,8 @@ where
     fn prepare_invalid_response(&mut self, mut parent_hash: B256) -> ProviderResult<PayloadStatus> {
         // Edge case: the `latestValid` field is the zero hash if the parent block is the terminal
         // PoW block, which we need to identify by looking at the parent's block difficulty
-        if let Some(parent) = self.sealed_header_by_hash(parent_hash)? &&
-            !parent.difficulty().is_zero()
+        if let Some(parent) = self.sealed_header_by_hash(parent_hash)?
+            && !parent.difficulty().is_zero()
         {
             parent_hash = B256::ZERO;
         }
@@ -1944,7 +1943,7 @@ where
     /// See [`ForkchoiceStateTracker::sync_target_state`]
     fn is_sync_target_head(&self, block_hash: B256) -> bool {
         if let Some(target) = self.state.forkchoice_state_tracker.sync_target_state() {
-            return target.head_block_hash == block_hash
+            return target.head_block_hash == block_hash;
         }
         false
     }
@@ -2056,12 +2055,12 @@ where
     fn validate_block(&self, block: &RecoveredBlock<N::Block>) -> Result<(), ConsensusError> {
         if let Err(e) = self.consensus.validate_header(block.sealed_header()) {
             error!(target: "engine::tree", ?block, "Failed to validate header {}: {e}", block.hash());
-            return Err(e)
+            return Err(e);
         }
 
         if let Err(e) = self.consensus.validate_block_pre_execution(block.sealed_block()) {
             error!(target: "engine::tree", ?block, "Failed to validate block {}: {e}", block.hash());
-            return Err(e)
+            return Err(e);
         }
 
         Ok(())
@@ -2077,7 +2076,7 @@ where
 
         if blocks.is_empty() {
             // nothing to append
-            return Ok(())
+            return Ok(());
         }
 
         let now = Instant::now();
@@ -2087,8 +2086,8 @@ where
             match self.insert_block(child) {
                 Ok(res) => {
                     debug!(target: "engine::tree", child =?child_num_hash, ?res, "connected buffered block");
-                    if self.is_sync_target_head(child_num_hash.hash) &&
-                        matches!(res, InsertPayloadOk::Inserted(BlockStatus::Valid))
+                    if self.is_sync_target_head(child_num_hash.hash)
+                        && matches!(res, InsertPayloadOk::Inserted(BlockStatus::Valid))
                     {
                         self.make_canonical(child_num_hash.hash)?;
                     }
@@ -2098,7 +2097,7 @@ where
                         debug!(target: "engine::tree", ?err, "failed to connect buffered block to tree");
                         if let Err(fatal) = self.on_insert_block_error(err) {
                             warn!(target: "engine::tree", %fatal, "fatal error occurred while connecting buffered blocks");
-                            return Err(fatal)
+                            return Err(fatal);
                         }
                     }
                 }
@@ -2115,7 +2114,7 @@ where
         block: RecoveredBlock<N::Block>,
     ) -> Result<(), InsertBlockError<N::Block>> {
         if let Err(err) = self.validate_block(&block) {
-            return Err(InsertBlockError::consensus_error(err, block.into_sealed_block()))
+            return Err(InsertBlockError::consensus_error(err, block.into_sealed_block()));
         }
         self.state.buffer.insert_block(block);
         Ok(())
@@ -2195,7 +2194,7 @@ where
                     if !state.finalized_block_hash.is_zero() {
                         // we don't have the block yet and the distance exceeds the allowed
                         // threshold
-                        return Some(state.finalized_block_hash)
+                        return Some(state.finalized_block_hash);
                     }
 
                     // OPTIMISTIC SYNCING
@@ -2211,7 +2210,7 @@ where
                     // However, optimism chains will do this. The risk of a reorg is however
                     // low.
                     debug!(target: "engine::tree", hash=?state.head_block_hash, "Setting head hash as an optimistic backfill target.");
-                    return Some(state.head_block_hash)
+                    return Some(state.head_block_hash);
                 }
                 Ok(Some(_)) => {
                     // we're fully synced to the finalized block
@@ -2406,11 +2405,11 @@ where
             .check_invalid_ancestor_with_head(lowest_buffered_ancestor, block.sealed_block())?
             .is_some()
         {
-            return Ok(None)
+            return Ok(None);
         }
 
         if !self.backfill_sync_state.is_idle() {
-            return Ok(None)
+            return Ok(None);
         }
 
         // try to append the block
@@ -2423,7 +2422,7 @@ where
                     // canonical
                     return Ok(Some(TreeEvent::TreeAction(TreeAction::MakeCanonical {
                         sync_target_head: block_num_hash.hash,
-                    })))
+                    })));
                 }
                 trace!(target: "engine::tree", "appended downloaded block");
                 self.try_connect_buffered_blocks(block_num_hash)?;
@@ -2435,7 +2434,7 @@ where
                     block_num_hash,
                     missing_ancestor,
                     head,
-                ))
+                ));
             }
             Ok(InsertPayloadOk::AlreadySeen(_)) => {
                 trace!(target: "engine::tree", "downloaded block already executed");
@@ -2445,7 +2444,7 @@ where
                     debug!(target: "engine::tree", err=%err.kind(), "failed to insert downloaded block");
                     if let Err(fatal) = self.on_insert_block_error(err) {
                         warn!(target: "engine::tree", %fatal, "fatal error occurred while inserting downloaded block");
-                        return Err(fatal)
+                        return Err(fatal);
                     }
                 }
             }
@@ -2528,7 +2527,7 @@ where
                 // We now assume that we already have this block in the tree. However, we need to
                 // run the conversion to ensure that the block hash is valid.
                 convert_to_block(self, input)?;
-                return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid))
+                return Ok(InsertPayloadOk::AlreadySeen(BlockStatus::Valid));
             }
             _ => {}
         };
@@ -2556,7 +2555,7 @@ where
                 return Ok(InsertPayloadOk::Inserted(BlockStatus::Disconnected {
                     head: self.state.tree_state.current_canonical_head,
                     missing_ancestor,
-                }))
+                }));
             }
             Ok(Some(_)) => {}
         }
@@ -2650,7 +2649,7 @@ where
                 } else {
                     // If the block is higher than the best block number, stop filtering, as it's
                     // the first block that's not in the database.
-                    break
+                    break;
                 }
             }
 
@@ -2789,18 +2788,18 @@ where
         finalized_block_hash: B256,
     ) -> Result<(), OnForkChoiceUpdated> {
         if finalized_block_hash.is_zero() {
-            return Ok(())
+            return Ok(());
         }
 
         match self.find_canonical_header(finalized_block_hash) {
             Ok(None) => {
                 debug!(target: "engine::tree", "Finalized block not found in canonical chain");
                 // if the finalized block is not known, we can't update the finalized block
-                return Err(OnForkChoiceUpdated::invalid_state())
+                return Err(OnForkChoiceUpdated::invalid_state());
             }
             Ok(Some(finalized)) => {
-                if Some(finalized.num_hash()) !=
-                    self.canonical_in_memory_state.get_finalized_num_hash()
+                if Some(finalized.num_hash())
+                    != self.canonical_in_memory_state.get_finalized_num_hash()
                 {
                     // we're also persisting the finalized block on disk so we can reload it on
                     // restart this is required by optimism which queries the finalized block: <https://github.com/ethereum-optimism/optimism/blob/c383eb880f307caa3ca41010ec10f30f08396b2e/op-node/rollup/sync/start.go#L65-L65>
@@ -2821,14 +2820,14 @@ where
     /// Updates the tracked safe block if we have it
     fn update_safe_block(&self, safe_block_hash: B256) -> Result<(), OnForkChoiceUpdated> {
         if safe_block_hash.is_zero() {
-            return Ok(())
+            return Ok(());
         }
 
         match self.find_canonical_header(safe_block_hash) {
             Ok(None) => {
                 debug!(target: "engine::tree", "Safe block not found in canonical chain");
                 // if the safe block is not known, we can't update the safe block
-                return Err(OnForkChoiceUpdated::invalid_state())
+                return Err(OnForkChoiceUpdated::invalid_state());
             }
             Ok(Some(safe)) => {
                 if Some(safe.num_hash()) != self.canonical_in_memory_state.get_safe_num_hash() {
@@ -2890,7 +2889,7 @@ where
             self.payload_validator.validate_payload_attributes_against_header(&attrs, head)
         {
             warn!(target: "engine::tree", %err, ?head, "Invalid payload attributes");
-            return OnForkChoiceUpdated::invalid_payload_attributes()
+            return OnForkChoiceUpdated::invalid_payload_attributes();
         }
 
         // 8. Client software MUST begin a payload build process building on top of
@@ -2972,7 +2971,7 @@ where
                 self.provider.clone(),
                 historical,
                 Some(blocks),
-            )))
+            )));
         }
 
         // Check if the block is persisted
@@ -2980,7 +2979,7 @@ where
             debug!(target: "engine::tree", %hash, number = %header.number(), "found canonical state for block in database, creating provider builder");
             // For persisted blocks, we create a builder that will fetch state directly from the
             // database
-            return Ok(Some(StateProviderBuilder::new(self.provider.clone(), hash, None)))
+            return Ok(Some(StateProviderBuilder::new(self.provider.clone(), hash, None)));
         }
 
         debug!(target: "engine::tree", %hash, "no canonical state found for block");

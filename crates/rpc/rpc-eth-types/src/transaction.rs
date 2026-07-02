@@ -54,6 +54,7 @@ impl<T: SignedTransaction> TransactionSource<T> {
                     index: Some(index),
                     block_hash: Some(block_hash),
                     block_number: Some(block_number),
+                    block_timestamp: None,
                     base_fee,
                 };
 
@@ -78,6 +79,7 @@ impl<T: SignedTransaction> TransactionSource<T> {
                         index: Some(index),
                         block_hash: Some(block_hash),
                         block_number: Some(block_number),
+                        block_timestamp: None,
                         base_fee,
                     },
                 )

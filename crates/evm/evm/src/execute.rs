@@ -6,7 +6,7 @@ use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::eip2718::WithEncoded;
 pub use alloy_evm::block::{BlockExecutor, BlockExecutorFactory};
 use alloy_evm::{
-    block::{CommitChanges, ExecutableTx},
+    block::{CommitChanges, ExecutableTx, TxResult},
     Evm, EvmEnv, EvmFactory, RecoveredTx, ToTxEnv,
 };
 use alloy_primitives::{Address, B256};
@@ -494,10 +494,12 @@ where
         ) -> CommitChanges,
     ) -> Result<Option<u64>, BlockExecutionError> {
         if let Some(gas_used) =
-            self.executor.execute_transaction_with_commit_condition(tx.as_executable(), f)?
+            self.executor.execute_transaction_with_commit_condition(tx.as_executable(), |res| {
+                f(&res.result().result)
+            })?
         {
             self.transactions.push(tx.into_recovered());
-            Ok(Some(gas_used))
+            Ok(Some(gas_used.tx_gas_used()))
         } else {
             Ok(None)
         }
@@ -564,8 +566,7 @@ pub struct BasicBlockExecutor<F, DB> {
 impl<F, DB: Database> BasicBlockExecutor<F, DB> {
     /// Creates a new `BasicBlockExecutor` with the given strategy.
     pub fn new(strategy_factory: F, db: DB) -> Self {
-        let db =
-            State::builder().with_database(db).with_bundle_update().without_state_clear().build();
+        let db = State::builder().with_database(db).with_bundle_update().build();
         Self { strategy_factory, db }
     }
 }
@@ -602,12 +603,14 @@ where
     where
         H: OnStateHook + 'static,
     {
+        self.db.set_state_hook(Some(Box::new(state_hook)));
         let result = self
             .strategy_factory
             .executor_for_block(&mut self.db, block)
             .map_err(BlockExecutionError::other)?
-            .with_state_hook(Some(Box::new(state_hook)))
-            .execute_block(block.transactions_recovered())?;
+            .execute_block(block.transactions_recovered());
+        self.db.set_state_hook(None);
+        let result = result?;
 
         self.db.merge_transitions(BundleRetention::Reverts);
 

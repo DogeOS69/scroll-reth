@@ -1951,6 +1951,8 @@ mod forkchoice_updated_tests {
             suggested_fee_recipient: Address::random(),
             withdrawals: None,
             parent_beacon_block_root: None,
+            slot_number: None,
+            target_gas_limit: None,
         });
         test_harness.tree.record_forkchoice_metrics(&attrs_some);
 

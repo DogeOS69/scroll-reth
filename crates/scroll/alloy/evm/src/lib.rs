@@ -48,7 +48,7 @@ use revm_scroll::{
 };
 use std::sync::Arc;
 
-use reth_scroll_chainspec::{ChainConfig, ScrollChainConfig, ScrollChainSpec};
+use reth_scroll_chainspec::{ChainConfig, ScrollChainConfig};
 /// Re-export `TX_L1_FEE_PRECISION_U256` from `revm-scroll` for convenience.
 pub use revm_scroll::l1block::TX_L1_FEE_PRECISION_U256;
 use scroll_alloy_hardforks::ScrollHardforks;

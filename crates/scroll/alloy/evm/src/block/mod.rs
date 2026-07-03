@@ -16,7 +16,6 @@ use crate::{
     ScrollPrecompilesFactory, ScrollTransactionIntoTxEnv, ToTxWithCompressionInfo,
 };
 use alloc::{boxed::Box, format, vec::Vec};
-
 use alloy_consensus::{Transaction, TxReceipt, Typed2718};
 use alloy_eips::Encodable2718;
 use alloy_evm::{
@@ -38,6 +37,7 @@ use revm::{
 use revm_scroll::builder::ScrollContext;
 use scroll_alloy_consensus::L1_MESSAGE_TRANSACTION_TYPE;
 use scroll_alloy_hardforks::{ScrollHardfork, ScrollHardforks};
+use std::sync::Arc;
 
 /// Compression info is a pair of (compression ratio, compressed size).
 pub type ScrollTxCompressionInfo = (U256, usize);
@@ -399,20 +399,34 @@ where
 }
 
 /// Scroll block executor factory.
-#[derive(Debug, Clone, Default, Copy)]
+#[derive(Debug)]
 pub struct ScrollBlockExecutorFactory<R, Spec, P = ScrollDefaultPrecompilesFactory> {
     /// Receipt builder.
     receipt_builder: R,
     /// Chain specification.
-    spec: Spec,
+    spec: Arc<Spec>,
     /// EVM factory.
-    evm_factory: ScrollEvmFactory<P>,
+    evm_factory: ScrollEvmFactory<Spec, P>,
+}
+
+impl<R: Clone, Spec, P: Clone> Clone for ScrollBlockExecutorFactory<R, Spec, P> {
+    fn clone(&self) -> Self {
+        Self {
+            receipt_builder: self.receipt_builder.clone(),
+            spec: self.spec.clone(),
+            evm_factory: self.evm_factory.clone(),
+        }
+    }
 }
 
 impl<R, Spec, P> ScrollBlockExecutorFactory<R, Spec, P> {
     /// Creates a new [`ScrollBlockExecutorFactory`] with the given receipt builder, spec and
     /// factory.
-    pub const fn new(receipt_builder: R, spec: Spec, evm_factory: ScrollEvmFactory<P>) -> Self {
+    pub const fn new(
+        receipt_builder: R,
+        spec: Arc<Spec>,
+        evm_factory: ScrollEvmFactory<Spec, P>,
+    ) -> Self {
         Self { receipt_builder, spec, evm_factory }
     }
 
@@ -422,12 +436,12 @@ impl<R, Spec, P> ScrollBlockExecutorFactory<R, Spec, P> {
     }
 
     /// Exposes the chain specification.
-    pub const fn spec(&self) -> &Spec {
+    pub const fn spec(&self) -> &Arc<Spec> {
         &self.spec
     }
 
     /// Exposes the EVM factory.
-    pub const fn evm_factory(&self) -> &ScrollEvmFactory<P> {
+    pub const fn evm_factory(&self) -> &ScrollEvmFactory<Spec, P> {
         &self.evm_factory
     }
 }
@@ -435,13 +449,13 @@ impl<R, Spec, P> ScrollBlockExecutorFactory<R, Spec, P> {
 impl<R, Spec, P> BlockExecutorFactory for ScrollBlockExecutorFactory<R, Spec, P>
 where
     R: ScrollReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
-    Spec: ScrollHardforks + ChainConfig<Config = ScrollChainConfig> + Clone,
+    Spec: ScrollHardforks + ChainConfig<Config = ScrollChainConfig>,
     P: ScrollPrecompilesFactory,
     ScrollTransactionIntoTxEnv<TxEnv>:
         FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction>,
     Self: 'static,
 {
-    type EvmFactory = ScrollEvmFactory<P>;
+    type EvmFactory = ScrollEvmFactory<Spec, P>;
     type ExecutionCtx<'a> = ScrollBlockExecutionCtx;
     type Transaction = R::Transaction;
     type Receipt = R::Receipt;

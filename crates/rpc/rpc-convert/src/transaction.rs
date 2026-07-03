@@ -529,7 +529,7 @@ impl TryIntoTxEnv<TxEnv> for TransactionRequest {
     ) -> Result<TxEnv, Self::Err> {
         // Ensure that if versioned hashes are set, they're not empty
         if self.blob_versioned_hashes.as_ref().is_some_and(|hashes| hashes.is_empty()) {
-            return Err(CallFeesError::BlobTransactionMissingBlobHashes.into())
+            return Err(CallFeesError::BlobTransactionMissingBlobHashes.into());
         }
 
         let tx_type = self.minimal_tx_type() as u8;
@@ -996,6 +996,7 @@ pub mod scroll {
     use reth_storage_api::{errors::ProviderError, ReceiptProvider};
     use revm_scroll::l1block::TX_L1_FEE_PRECISION_U256;
     use scroll_alloy_consensus::{ScrollAdditionalInfo, ScrollTransactionInfo, ScrollTxEnvelope};
+    use scroll_alloy_network::ScrollNetworkTransactionRequest;
     use scroll_alloy_rpc_types::ScrollTransactionRequest;
 
     /// Creates [`ScrollTransactionInfo`] by adding [`ScrollAdditionalInfo`] to [`TransactionInfo`]
@@ -1043,6 +1044,13 @@ pub mod scroll {
         }
     }
 
+    impl TryIntoSimTx<ScrollTxEnvelope> for ScrollNetworkTransactionRequest {
+        fn try_into_sim_tx(self) -> Result<ScrollTxEnvelope, ValueError<Self>> {
+            let request: ScrollTransactionRequest = self.into();
+            request.try_into_sim_tx().map_err(ValueError::convert)
+        }
+    }
+
     impl TryIntoTxEnv<scroll_alloy_evm::ScrollTransactionIntoTxEnv<TxEnv>>
         for ScrollTransactionRequest
     {
@@ -1059,6 +1067,21 @@ pub mod scroll {
                 Some(TX_L1_FEE_PRECISION_U256),
                 Some(0),
             ))
+        }
+    }
+
+    impl TryIntoTxEnv<scroll_alloy_evm::ScrollTransactionIntoTxEnv<TxEnv>>
+        for ScrollNetworkTransactionRequest
+    {
+        type Err = EthTxEnvError;
+
+        fn try_into_tx_env<Spec>(
+            self,
+            cfg_env: &CfgEnv<Spec>,
+            block_env: &BlockEnv,
+        ) -> Result<scroll_alloy_evm::ScrollTransactionIntoTxEnv<TxEnv>, Self::Err> {
+            let request: ScrollTransactionRequest = self.into();
+            request.try_into_tx_env(cfg_env, block_env)
         }
     }
 }

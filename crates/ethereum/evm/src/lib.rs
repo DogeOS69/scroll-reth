@@ -19,7 +19,7 @@ extern crate alloc;
 
 use alloc::{borrow::Cow, sync::Arc};
 use alloy_consensus::Header;
-use alloy_eips::Decodable2718;
+use alloy_eips::{eip4895::Withdrawal, Decodable2718};
 pub use alloy_evm::EthEvm;
 use alloy_evm::{
     eth::{EthBlockExecutionCtx, EthBlockExecutorFactory},
@@ -176,6 +176,7 @@ where
                 suggested_fee_recipient: attributes.suggested_fee_recipient,
                 prev_randao: attributes.prev_randao,
                 gas_limit: attributes.gas_limit,
+                slot_number: None,
             },
             self.chain_spec().next_block_base_fee(parent, attributes.timestamp).unwrap_or_default(),
             self.chain_spec(),
@@ -192,7 +193,14 @@ where
             parent_hash: block.header().parent_hash,
             parent_beacon_block_root: block.header().parent_beacon_block_root,
             ommers: &block.body().ommers,
-            withdrawals: block.body().withdrawals.as_ref().map(Cow::Borrowed),
+            withdrawals: block
+                .body()
+                .withdrawals
+                .as_ref()
+                .map(|w| Cow::Borrowed(w.as_ref().as_slice())),
+            extra_data: block.header().extra_data.clone(),
+            tx_count_hint: Some(block.body().transactions.len()),
+            slot_number: block.header().slot_number,
         })
     }
 
@@ -205,7 +213,10 @@ where
             parent_hash: parent.hash(),
             parent_beacon_block_root: attributes.parent_beacon_block_root,
             ommers: &[],
-            withdrawals: attributes.withdrawals.map(Cow::Owned),
+            withdrawals: attributes.withdrawals.map(|w| Cow::<[Withdrawal]>::Owned(w.into_inner())),
+            extra_data: self.block_assembler.extra_data.clone(),
+            tx_count_hint: None,
+            slot_number: None,
         })
     }
 }
@@ -236,8 +247,9 @@ where
             revm_spec_by_timestamp_and_block_number(self.chain_spec(), timestamp, block_number);
 
         // configure evm env based on parent block
-        let mut cfg_env =
-            CfgEnv::new().with_chain_id(self.chain_spec().chain().id()).with_spec(spec);
+        let mut cfg_env = CfgEnv::new()
+            .with_chain_id(self.chain_spec().chain().id())
+            .with_spec_and_mainnet_gas_params(spec);
 
         if let Some(blob_params) = &blob_params {
             cfg_env.set_max_blobs_per_tx(blob_params.max_blobs_per_tx);
@@ -268,6 +280,7 @@ where
             gas_limit: payload.payload.gas_limit(),
             basefee: payload.payload.saturated_base_fee_per_gas(),
             blob_excess_gas_and_price,
+            slot_num: payload.payload.slot_number().unwrap_or_default(),
         };
 
         Ok(EvmEnv { cfg_env, block_env })
@@ -282,6 +295,9 @@ where
             parent_beacon_block_root: payload.sidecar.parent_beacon_block_root(),
             ommers: &[],
             withdrawals: payload.payload.withdrawals().map(|w| Cow::Owned(w.clone().into())),
+            extra_data: payload.payload.as_v1().extra_data.clone(),
+            tx_count_hint: Some(payload.payload.transactions().len()),
+            slot_number: payload.payload.slot_number(),
         })
     }
 
@@ -400,15 +416,13 @@ mod tests {
 
         let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
 
-        let evm_env = EvmEnv {
-            cfg_env: CfgEnv::new().with_spec(SpecId::CONSTANTINOPLE),
-            ..Default::default()
-        };
+        let evm_env =
+            EvmEnv { cfg_env: CfgEnv::new_with_spec(SpecId::PETERSBURG), ..Default::default() };
 
         let evm = evm_config.evm_with_env(db, evm_env);
 
         // Check that the spec ID is setup properly
-        assert_eq!(evm.cfg.spec, SpecId::CONSTANTINOPLE);
+        assert_eq!(evm.cfg.spec, SpecId::PETERSBURG);
     }
 
     #[test]
@@ -467,10 +481,8 @@ mod tests {
         let evm_config = EthEvmConfig::mainnet();
         let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
 
-        let evm_env = EvmEnv {
-            cfg_env: CfgEnv::new().with_spec(SpecId::CONSTANTINOPLE),
-            ..Default::default()
-        };
+        let evm_env =
+            EvmEnv { cfg_env: CfgEnv::new_with_spec(SpecId::PETERSBURG), ..Default::default() };
 
         let evm = evm_config.evm_with_env_and_inspector(db, evm_env.clone(), NoOpInspector {});
 

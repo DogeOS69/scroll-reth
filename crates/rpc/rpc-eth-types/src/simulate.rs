@@ -9,7 +9,7 @@ use crate::{
 };
 use alloy_consensus::{transaction::TxHashRef, BlockHeader, Transaction as _};
 use alloy_eips::eip2718::WithEncoded;
-use alloy_network::TransactionBuilder;
+use alloy_network::{NetworkTransactionBuilder, TransactionBuilder};
 use alloy_rpc_types_eth::{
     simulate::{SimCallResult, SimulateError, SimulatedBlock},
     BlockTransactionsKind,
@@ -200,36 +200,43 @@ where
     let mut log_index = 0;
     for (index, (result, tx)) in results.into_iter().zip(block.body().transactions()).enumerate() {
         let call = match result {
-            ExecutionResult::Halt { reason, gas_used } => {
+            ExecutionResult::Halt { reason, gas, .. } => {
+                let gas_used = gas.tx_gas_used();
                 let error = T::Error::from_evm_halt(reason, tx.gas_limit());
                 SimCallResult {
                     return_data: Bytes::new(),
                     error: Some(SimulateError {
                         message: error.to_string(),
                         code: error.into().code(),
+                        data: None,
                     }),
                     gas_used,
+                    max_used_gas: Some(gas.total_gas_spent()),
                     logs: Vec::new(),
                     status: false,
                 }
             }
-            ExecutionResult::Revert { output, gas_used } => {
+            ExecutionResult::Revert { output, gas, .. } => {
+                let gas_used = gas.tx_gas_used();
                 let error = RevertError::new(output.clone());
                 SimCallResult {
                     return_data: output,
                     error: Some(SimulateError {
                         code: error.error_code(),
                         message: error.to_string(),
+                        data: None,
                     }),
                     gas_used,
+                    max_used_gas: Some(gas.total_gas_spent()),
                     status: false,
                     logs: Vec::new(),
                 }
             }
-            ExecutionResult::Success { output, gas_used, logs, .. } => SimCallResult {
+            ExecutionResult::Success { output, gas, logs, .. } => SimCallResult {
                 return_data: output.into_data(),
                 error: None,
-                gas_used,
+                gas_used: gas.tx_gas_used(),
+                max_used_gas: Some(gas.total_gas_spent()),
                 logs: logs
                     .into_iter()
                     .map(|log| {

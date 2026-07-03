@@ -69,6 +69,5 @@ op = [
     "reth-evm/op",
     "reth-primitives-traits/op",
     "reth-rpc-convert/op",
-    "alloy-evm/op",
 ]
 scroll = ["reth-scroll-evm", "reth-rpc-convert/scroll"]

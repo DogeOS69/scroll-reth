@@ -97,8 +97,8 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
                 while let Some(notification) = stream.next().await {
                     let chain = notification.committed();
                     for block in chain.blocks_iter() {
-                        if block.body().contains_transaction(&hash) &&
-                            let Some(receipt) = this.transaction_receipt(hash).await?
+                        if block.body().contains_transaction(&hash)
+                            && let Some(receipt) = this.transaction_receipt(hash).await?
                         {
                             return Ok(receipt);
                         }
@@ -168,7 +168,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
             if let Some(tx) =
                 self.pool().get_pooled_transaction_element(hash).map(|tx| tx.encoded_2718().into())
             {
-                return Ok(Some(tx))
+                return Ok(Some(tx));
             }
 
             self.spawn_blocking_io(move |ref this| {
@@ -267,19 +267,21 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
             if let Some(block) = self.recovered_block(block_id).await? {
                 let block_hash = block.hash();
                 let block_number = block.number();
+                let block_timestamp = block.timestamp();
                 let base_fee_per_gas = block.base_fee_per_gas();
                 if let Some((signer, tx)) = block.transactions_with_sender().nth(index) {
                     let tx_info = TransactionInfo {
                         hash: Some(*tx.tx_hash()),
                         block_hash: Some(block_hash),
                         block_number: Some(block_number),
+                        block_timestamp: Some(block_timestamp),
                         base_fee: base_fee_per_gas,
                         index: Some(index as u64),
                     };
 
                     return Ok(Some(
                         self.tx_resp_builder().fill(tx.clone().with_signer(*signer), tx_info)?,
-                    ))
+                    ));
                 }
             }
 
@@ -299,8 +301,8 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     {
         async move {
             // Check the pool first
-            if include_pending &&
-                let Some(tx) =
+            if include_pending
+                && let Some(tx) =
                     RpcNodeCore::pool(self).get_transaction_by_sender_and_nonce(sender, nonce)
             {
                 let transaction = tx.transaction.clone_into_consensus();
@@ -340,6 +342,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
                 .and_then(|block| {
                     let block_hash = block.hash();
                     let block_number = block.number();
+                    let block_timestamp = block.timestamp();
                     let base_fee_per_gas = block.base_fee_per_gas();
 
                     block
@@ -351,6 +354,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
                                 hash: Some(*tx.tx_hash()),
                                 block_hash: Some(block_hash),
                                 block_number: Some(block_number),
+                                block_timestamp: Some(block_timestamp),
                                 base_fee: base_fee_per_gas,
                                 index: Some(index as u64),
                             };
@@ -374,10 +378,10 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
         Self: LoadBlock,
     {
         async move {
-            if let Some(block) = self.recovered_block(block_id).await? &&
-                let Some(tx) = block.body().transactions().get(index)
+            if let Some(block) = self.recovered_block(block_id).await?
+                && let Some(tx) = block.body().transactions().get(index)
             {
-                return Ok(Some(tx.encoded_2718().into()))
+                return Ok(Some(tx.encoded_2718().into()));
             }
 
             Ok(None)
@@ -400,7 +404,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
             };
 
             if self.find_signer(&from).is_err() {
-                return Err(SignError::NoAccount.into_eth_err())
+                return Err(SignError::NoAccount.into_eth_err());
             }
 
             // set nonce if not already set before

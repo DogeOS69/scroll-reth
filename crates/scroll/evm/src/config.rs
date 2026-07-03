@@ -21,12 +21,17 @@ use revm::{
     context::{BlockEnv, CfgEnv, TxEnv},
     primitives::U256,
 };
-use revm_scroll::ScrollSpecId;
+use revm_scroll::{gas::scroll_gas_params, ScrollSpecId};
 use scroll_alloy_evm::{
     ScrollBlockExecutionCtx, ScrollBlockExecutorFactory, ScrollPrecompilesFactory,
     ScrollReceiptBuilder, ScrollTransactionIntoTxEnv,
 };
 use scroll_alloy_hardforks::ScrollHardforks;
+
+fn scroll_cfg_env(spec_id: ScrollSpecId, chain_id: u64) -> CfgEnv<ScrollSpecId> {
+    CfgEnv::new_with_spec_and_gas_params(spec_id, scroll_gas_params(spec_id))
+        .with_chain_id(chain_id)
+}
 
 impl<ChainSpec, N, R, P> ConfigureEvm for ScrollEvmConfig<ChainSpec, N, R, P>
 where
@@ -62,9 +67,7 @@ where
         let chain_spec = self.chain_spec();
         let spec_id = self.spec_id_at_timestamp_and_number(header.timestamp(), header.number());
 
-        let cfg_env = CfgEnv::<ScrollSpecId>::default()
-            .with_spec(spec_id)
-            .with_chain_id(chain_spec.chain().id());
+        let cfg_env = scroll_cfg_env(spec_id, chain_spec.chain().id());
 
         // get coinbase from chain spec
         let coinbase = if let Some(vault_address) = chain_spec.chain_config().fee_vault_address {
@@ -83,6 +86,7 @@ where
             basefee: header.base_fee_per_gas().unwrap_or_default(),
             // EIP-4844 excess blob gas of this block, introduced in Cancun
             blob_excess_gas_and_price: None,
+            slot_num: header.slot_number().unwrap_or_default(),
         };
 
         Ok(EvmEnv { cfg_env, block_env })
@@ -100,9 +104,7 @@ where
         let chain_spec = self.chain_spec();
 
         // configure evm env based on parent block
-        let cfg_env = CfgEnv::<ScrollSpecId>::default()
-            .with_chain_id(chain_spec.chain().id())
-            .with_spec(spec_id);
+        let cfg_env = scroll_cfg_env(spec_id, chain_spec.chain().id());
 
         // get coinbase from chain spec
         let coinbase = if let Some(vault_address) = chain_spec.chain_config().fee_vault_address {
@@ -120,6 +122,7 @@ where
             gas_limit: attributes.gas_limit,
             basefee: attributes.base_fee,
             blob_excess_gas_and_price: None,
+            slot_num: 0,
         };
 
         Ok(EvmEnv { cfg_env, block_env })
@@ -164,9 +167,7 @@ where
 
         let spec_id = self.spec_id_at_timestamp_and_number(timestamp, block_number);
 
-        let cfg_env = CfgEnv::<ScrollSpecId>::default()
-            .with_chain_id(chain_spec.chain().id())
-            .with_spec(spec_id);
+        let cfg_env = scroll_cfg_env(spec_id, chain_spec.chain().id());
 
         // get coinbase from chain config.
         let coinbase =
@@ -185,6 +186,7 @@ where
             gas_limit: payload.payload.as_v1().gas_limit,
             basefee: payload.payload.as_v1().base_fee_per_gas.to(),
             blob_excess_gas_and_price: None,
+            slot_num: payload.payload.slot_number().unwrap_or_default(),
         };
 
         Ok(EvmEnv { cfg_env, block_env })
@@ -322,6 +324,7 @@ mod tests {
             basefee: header.base_fee_per_gas.unwrap_or_default(),
             gas_limit: header.gas_limit,
             blob_excess_gas_and_price: None,
+            slot_num: 0,
         };
         assert_eq!(env.block_env, expected)
     }
@@ -370,6 +373,7 @@ mod tests {
             basefee: 155157341,
             gas_limit: header.gas_limit,
             blob_excess_gas_and_price: None,
+            slot_num: 0,
         };
         assert_eq!(block_env, expected);
 

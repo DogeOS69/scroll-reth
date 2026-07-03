@@ -1,15 +1,13 @@
 //! Feynman fork transition for Scroll.
 
-use alloc::vec;
+use alloy_evm::Database;
 use revm::{
     bytecode::Bytecode,
-    database::{states::StorageSlot, State},
     primitives::{bytes, Bytes, U256},
-    state::AccountInfo,
-    Database,
+    DatabaseCommit,
 };
 
-// Import L1GasPriceOracle address and slots.
+use super::commit_l1_gas_oracle_update;
 use crate::gas_price_oracle::*;
 
 /// Bytecode of L1 gas price oracle at Feynman transition.
@@ -33,53 +31,21 @@ const FEYNMAN_L1_GAS_PRICE_ORACLE_STORAGE: [(U256, U256); 3] = [
 ///    - Updates the L1 oracle contract bytecode to reflect the DA cost reduction.
 ///    - Sets the initial compression penalty threshold and penalty factor values.
 ///    - Sets the `isFeynman` slot to 1 (true).
-pub(super) fn apply_feynman_hard_fork<DB: Database>(
-    state: &mut State<DB>,
-) -> Result<(), DB::Error> {
+pub(super) fn apply_feynman_hard_fork<DB>(state: &mut DB) -> Result<(), DB::Error>
+where
+    DB: Database + DatabaseCommit,
+{
     // No-op if already applied.
     // Note: This requires a storage read for every Feynman block, and it means this
     // read needs to be included in the execution witness. Unfortunately, there is no
     // other reliable way to apply the change only at the transition block, since
     // `ScrollBlockExecutor` does not have access to the parent timestamp.
     if state.storage(L1_GAS_PRICE_ORACLE_ADDRESS, GPO_IS_FEYNMAN_SLOT)? == IS_FEYNMAN {
-        return Ok(())
+        return Ok(());
     }
 
-    let oracle = state.load_cache_account(L1_GAS_PRICE_ORACLE_ADDRESS)?;
-
-    // compute the code hash
     let bytecode = Bytecode::new_raw(FEYNMAN_L1_GAS_PRICE_ORACLE_BYTECODE);
-    let code_hash = bytecode.hash_slow();
-
-    // get the old oracle account info
-    let old_oracle_info = oracle.account_info().unwrap_or_default();
-
-    // init new oracle account information
-    let new_oracle_info = AccountInfo { code_hash, code: Some(bytecode), ..old_oracle_info };
-
-    // init new storage
-    let new_storage = FEYNMAN_L1_GAS_PRICE_ORACLE_STORAGE
-        .into_iter()
-        .map(|(slot, present_value)| {
-            (
-                slot,
-                StorageSlot {
-                    present_value,
-                    previous_or_original_value: oracle.storage_slot(slot).unwrap_or_default(),
-                },
-            )
-        })
-        .collect();
-
-    // create transition for oracle new account info and storage
-    let transition = oracle.change(new_oracle_info, new_storage);
-
-    // add transition
-    if let Some(s) = state.transition_state.as_mut() {
-        s.add_transitions(vec![(L1_GAS_PRICE_ORACLE_ADDRESS, transition)])
-    }
-
-    Ok(())
+    commit_l1_gas_oracle_update(state, bytecode, FEYNMAN_L1_GAS_PRICE_ORACLE_STORAGE)
 }
 
 #[cfg(test)]
@@ -101,8 +67,7 @@ mod tests {
     fn test_apply_feynman_fork() -> eyre::Result<()> {
         // init state
         let db = EmptyDB::new();
-        let mut state =
-            State::builder().with_database(db).with_bundle_update().without_state_clear().build();
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
 
         // oracle pre fork state
         let bytecode_pre_fork = Bytecode::new_raw(CURIE_L1_GAS_PRICE_ORACLE_BYTECODE);
@@ -200,8 +165,7 @@ mod tests {
             db.insert_account_storage(L1_GAS_PRICE_ORACLE_ADDRESS, slot, value).unwrap();
         }
 
-        let mut state =
-            State::builder().with_database(db).with_bundle_update().without_state_clear().build();
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
 
         // make sure account is in cache
         state.load_cache_account(L1_GAS_PRICE_ORACLE_ADDRESS)?;

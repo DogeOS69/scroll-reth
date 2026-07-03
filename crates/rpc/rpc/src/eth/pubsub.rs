@@ -139,7 +139,7 @@ where
                                 };
                                 std::future::ready(tx_value)
                             });
-                            return pipe_from_stream(accepted_sink, stream).await
+                            return pipe_from_stream(accepted_sink, stream).await;
                         }
                         Params::Bool(false) | Params::None => {
                             // only hashes requested
@@ -149,10 +149,18 @@ where
                                 "Invalid params for newPendingTransactions",
                             ))
                         }
+                        Params::TransactionReceipts(_) => {
+                            return Err(invalid_params_rpc_err(
+                                "Invalid params for newPendingTransactions",
+                            ))
+                        }
                     }
                 }
 
                 pipe_from_stream(accepted_sink, self.pending_transaction_hashes_stream()).await
+            }
+            SubscriptionKind::TransactionReceipts => {
+                Err(invalid_params_rpc_err("transactionReceipts subscription is not supported"))
             }
             SubscriptionKind::Syncing => {
                 // get new block subscription
@@ -172,7 +180,7 @@ where
                 .map_err(SubscriptionSerializeError::new)?;
 
                 if accepted_sink.send(msg).await.is_err() {
-                    return Ok(())
+                    return Ok(());
                 }
 
                 while canon_state.next().await.is_some() {
@@ -192,7 +200,7 @@ where
                         .map_err(SubscriptionSerializeError::new)?;
 
                         if accepted_sink.send(msg).await.is_err() {
-                            break
+                            break;
                         }
                     }
                 }

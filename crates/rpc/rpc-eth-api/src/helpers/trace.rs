@@ -280,7 +280,7 @@ pub trait Trace: LoadState<Error: FromEvmError<Self::Evm>> {
         async move {
             let block = async {
                 if block.is_some() {
-                    return Ok(block)
+                    return Ok(block);
                 }
                 self.recovered_block(block_id).await
             };
@@ -291,7 +291,7 @@ pub trait Trace: LoadState<Error: FromEvmError<Self::Evm>> {
 
             if block.body().transactions().is_empty() {
                 // nothing to trace
-                return Ok(Some(Vec::new()))
+                return Ok(Some(Vec::new()));
             }
 
             // replay all transactions of the block
@@ -322,6 +322,7 @@ pub trait Trace: LoadState<Error: FromEvmError<Self::Evm>> {
                 );
 
                 let mut idx = 0;
+                let block_timestamp = block.timestamp();
 
                 let results = this
                     .evm_config()
@@ -333,6 +334,7 @@ pub trait Trace: LoadState<Error: FromEvmError<Self::Evm>> {
                             index: Some(idx),
                             block_hash: Some(block_hash),
                             block_number: Some(block_number),
+                            block_timestamp: Some(block_timestamp),
                             base_fee: Some(base_fee),
                         };
                         idx += 1;

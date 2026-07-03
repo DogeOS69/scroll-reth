@@ -30,7 +30,7 @@ use core::{
     ops::{Deref, DerefMut},
 };
 use revm::{
-    context::{result::HaltReason, BlockEnv, TxEnv},
+    context::{result::HaltReason, BlockEnv, CfgEnv, DBErrorMarker, TxEnv},
     context_interface::result::{EVMError, ResultAndState},
     handler::PrecompileProvider,
     inspector::NoOpInspector,
@@ -38,10 +38,8 @@ use revm::{
     Context, ExecuteEvm, InspectEvm, Inspector, SystemCallEvm,
 };
 use revm_scroll::{
-    builder::{
-        DefaultScrollContext, EuclidEipActivations, FeynmanEipActivations, ScrollBuilder,
-        ScrollContext,
-    },
+    builder::{DefaultScrollContext, ScrollBuilder, ScrollContext},
+    gas::scroll_gas_params,
     instructions::ScrollInstructions,
     precompile::ScrollPrecompileProvider,
     ScrollSpecId,
@@ -120,6 +118,10 @@ where
 
     fn block(&self) -> &Self::BlockEnv {
         &self.block
+    }
+
+    fn cfg_env(&self) -> &CfgEnv<Self::Spec> {
+        &self.cfg
     }
 
     fn chain_id(&self) -> u64 {
@@ -207,7 +209,7 @@ impl<P: ScrollPrecompilesFactory> EvmFactory for ScrollEvmFactory<P> {
     type Evm<DB: Database, I: Inspector<ScrollContext<DB>>> = ScrollEvm<DB, I, Self::Precompiles>;
     type Context<DB: Database> = ScrollContext<DB>;
     type Tx = ScrollTransactionIntoTxEnv<TxEnv>;
-    type Error<DBError: core::error::Error + Send + Sync + 'static> = EVMError<DBError>;
+    type Error<DBError: DBErrorMarker> = EVMError<DBError>;
     type HaltReason = HaltReason;
     type Spec = ScrollSpecId;
     type BlockEnv = BlockEnv;
@@ -218,14 +220,14 @@ impl<P: ScrollPrecompilesFactory> EvmFactory for ScrollEvmFactory<P> {
         db: DB,
         input: EvmEnv<ScrollSpecId>,
     ) -> Self::Evm<DB, NoOpInspector> {
-        let spec_id = input.cfg_env.spec;
+        let mut cfg_env = input.cfg_env;
+        let spec_id = cfg_env.spec;
+        cfg_env.set_gas_params(scroll_gas_params(spec_id));
         ScrollEvm {
             inner: Context::scroll()
                 .with_db(db)
                 .with_block(input.block_env)
-                .with_cfg(input.cfg_env)
-                .maybe_with_eip_7702()
-                .maybe_with_eip_7623()
+                .with_cfg(cfg_env)
                 .build_scroll_with_inspector(NoOpInspector {})
                 .with_precompiles(P::with_spec(spec_id)),
             inspect: false,
@@ -238,14 +240,14 @@ impl<P: ScrollPrecompilesFactory> EvmFactory for ScrollEvmFactory<P> {
         input: EvmEnv<ScrollSpecId>,
         inspector: I,
     ) -> Self::Evm<DB, I> {
-        let spec_id = input.cfg_env.spec;
+        let mut cfg_env = input.cfg_env;
+        let spec_id = cfg_env.spec;
+        cfg_env.set_gas_params(scroll_gas_params(spec_id));
         ScrollEvm {
             inner: Context::scroll()
                 .with_db(db)
                 .with_block(input.block_env)
-                .with_cfg(input.cfg_env)
-                .maybe_with_eip_7702()
-                .maybe_with_eip_7623()
+                .with_cfg(cfg_env)
                 .build_scroll_with_inspector(inspector)
                 .with_precompiles(P::with_spec(spec_id)),
             inspect: true,

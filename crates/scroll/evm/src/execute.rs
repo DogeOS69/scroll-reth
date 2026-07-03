@@ -95,7 +95,7 @@ mod tests {
 
     fn state() -> State<EmptyDBTyped<Infallible>> {
         let db = EmptyDBTyped::<Infallible>::new();
-        State::builder().with_database(db).with_bundle_update().without_state_clear().build()
+        State::builder().with_database(db).with_bundle_update().build()
     }
 
     #[allow(clippy::type_complexity)]

@@ -4,7 +4,7 @@ use crate::SequencerClientError;
 use alloy_json_rpc::{RpcRecv, RpcSend};
 use alloy_primitives::{hex, B256};
 use alloy_rpc_client::{BuiltInConnectionString, ClientBuilder, RpcClient as Client};
-use alloy_transport_http::Http;
+use alloy_transport_http::{reqwest, Client as HttpClient, Http};
 use std::{str::FromStr, sync::Arc};
 use thiserror::Error;
 use tracing::warn;
@@ -48,7 +48,7 @@ impl SequencerClient {
         let sequencer_endpoint = sequencer_endpoint.into();
         let endpoint = BuiltInConnectionString::from_str(&sequencer_endpoint)?;
         if let BuiltInConnectionString::Http(url) = endpoint {
-            let client = reqwest::Client::builder()
+            let client = HttpClient::builder()
                 // we force use tls to prevent native issues
                 .use_rustls_tls()
                 .build()?;
@@ -63,7 +63,7 @@ impl SequencerClient {
     /// Creates a new [`SequencerClient`] with http transport with the given http client.
     pub fn with_http_client(
         sequencer_endpoint: impl Into<String>,
-        client: reqwest::Client,
+        client: HttpClient,
     ) -> Result<Self, Error> {
         let sequencer_endpoint: String = sequencer_endpoint.into();
         let url = sequencer_endpoint

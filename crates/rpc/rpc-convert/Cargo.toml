@@ -36,6 +36,7 @@ op-revm = { workspace = true, optional = true }
 # scroll
 scroll-alloy-consensus = { workspace = true, optional = true }
 scroll-alloy-evm = { workspace = true, optional = true }
+scroll-alloy-network = { workspace = true, optional = true }
 scroll-alloy-rpc-types = { workspace = true, optional = true }
 reth-scroll-primitives = { workspace = true, optional = true }
 revm-scroll = { workspace = true, optional = true }
@@ -70,6 +71,7 @@ op = [
 scroll = [
     "dep:scroll-alloy-consensus",
     "dep:scroll-alloy-evm",
+    "dep:scroll-alloy-network",
     "dep:scroll-alloy-rpc-types",
     "dep:reth-scroll-primitives",
     "dep:reth-storage-api",

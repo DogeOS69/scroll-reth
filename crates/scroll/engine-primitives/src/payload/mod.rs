@@ -11,12 +11,12 @@ use core::marker::PhantomData;
 
 use alloy_consensus::{proofs, EMPTY_OMMER_ROOT_HASH};
 use alloy_eips::eip2718::Decodable2718;
-use alloy_primitives::U256;
+use alloy_primitives::{keccak256, U256};
 use alloy_rlp::BufMut;
 use alloy_rpc_types_engine::{
     ExecutionData, ExecutionPayload, ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3,
     ExecutionPayloadEnvelopeV4, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3,
-    PayloadError,
+    ExecutionPayloadV4, PayloadError,
 };
 use reth_engine_primitives::EngineTypes;
 use reth_payload_primitives::{BuiltPayload, PayloadTypes};
@@ -107,6 +107,7 @@ pub fn try_into_block<T: Decodable2718, CS: ScrollHardforks>(
         ExecutionPayload::V1(payload) => try_payload_v1_to_block(payload, chainspec)?,
         ExecutionPayload::V2(payload) => try_payload_v2_to_block(payload, chainspec)?,
         ExecutionPayload::V3(payload) => try_payload_v3_to_block(payload, chainspec)?,
+        ExecutionPayload::V4(payload) => try_payload_v4_to_block(payload, chainspec)?,
     };
 
     block.header.parent_beacon_block_root = value.sidecar.parent_beacon_block_root();
@@ -171,6 +172,8 @@ fn try_payload_v1_to_block<T: Decodable2718, CS: ScrollHardforks>(
         excess_blob_gas: None,
         parent_beacon_block_root: None,
         requests_hash: None,
+        block_access_list_hash: None,
+        slot_number: None,
         extra_data: payload.extra_data,
         // Defaults
         ommers_hash: EMPTY_OMMER_ROOT_HASH,
@@ -210,10 +213,23 @@ fn try_payload_v3_to_block<T: Decodable2718, CS: ScrollHardforks>(
     Ok(base_block)
 }
 
+/// Tries to convert an [`ExecutionPayloadV4`] to [`Block`].
+fn try_payload_v4_to_block<T: Decodable2718, CS: ScrollHardforks>(
+    payload: ExecutionPayloadV4,
+    chainspec: CS,
+) -> Result<Block<T>, PayloadError> {
+    let mut base_block = try_payload_v3_to_block(payload.payload_inner, chainspec)?;
+
+    base_block.header.block_access_list_hash = Some(keccak256(&payload.block_access_list));
+    base_block.header.slot_number = Some(payload.slot_number);
+
+    Ok(base_block)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{Address, Bloom, B256, U256};
+    use alloy_primitives::{Address, Bloom, Bytes, B256, U256};
     use alloy_rpc_types_engine::ExecutionPayloadV1;
     use arbitrary::{Arbitrary, Unstructured};
     use rand::Rng;
@@ -325,6 +341,55 @@ mod tests {
 
         let _: Block<ScrollTransactionSigned> =
             try_into_block(execution_data, SCROLL_MAINNET.clone())?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_can_convert_execution_v4_payload_into_block() -> eyre::Result<()> {
+        let mut bytes = [0u8; 1024];
+        rand::rng().fill(bytes.as_mut_slice());
+        let mut u = Unstructured::new(&bytes);
+
+        let mut extra_data = [0u8; 64];
+        rand::rng().fill(extra_data.as_mut_slice());
+
+        let block_access_list = Bytes::from(vec![0xaa, 0xbb, 0xcc]);
+        let slot_number = u64::arbitrary(&mut u)?;
+        let execution_payload = ExecutionPayload::V4(ExecutionPayloadV4 {
+            payload_inner: ExecutionPayloadV3 {
+                payload_inner: ExecutionPayloadV2 {
+                    payload_inner: ExecutionPayloadV1 {
+                        parent_hash: B256::random(),
+                        fee_recipient: Address::random(),
+                        state_root: B256::random(),
+                        receipts_root: B256::random(),
+                        logs_bloom: Bloom::random(),
+                        prev_randao: B256::random(),
+                        block_number: u64::arbitrary(&mut u)?,
+                        gas_limit: u64::arbitrary(&mut u)?,
+                        gas_used: u64::arbitrary(&mut u)?,
+                        timestamp: u64::arbitrary(&mut u)?,
+                        extra_data: extra_data.into(),
+                        base_fee_per_gas: U256::from(u64::arbitrary(&mut u)?),
+                        block_hash: B256::random(),
+                        transactions: vec![],
+                    },
+                    withdrawals: vec![],
+                },
+                blob_gas_used: 0,
+                excess_blob_gas: 0,
+            },
+            block_access_list: block_access_list.clone(),
+            slot_number,
+        });
+        let execution_data = ExecutionData::new(execution_payload, Default::default());
+
+        let block: Block<ScrollTransactionSigned> =
+            try_into_block(execution_data, SCROLL_MAINNET.clone())?;
+
+        assert_eq!(block.header.block_access_list_hash, Some(keccak256(&block_access_list)));
+        assert_eq!(block.header.slot_number, Some(slot_number));
 
         Ok(())
     }

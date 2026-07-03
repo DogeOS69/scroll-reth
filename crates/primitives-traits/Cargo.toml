@@ -68,6 +68,7 @@ arbitrary = { workspace = true, features = ["derive"] }
 secp256k1 = { workspace = true, features = ["recovery", "global-context", "rand"] }
 bincode.workspace = true
 byteorder.workspace = true
+modular-bitfield.workspace = true
 proptest-arbitrary-interop.workspace = true
 proptest.workspace = true
 rand.workspace = true

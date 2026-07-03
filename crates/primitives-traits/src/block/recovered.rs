@@ -450,6 +450,14 @@ impl<B: Block> BlockHeader for RecoveredBlock<B> {
         self.header().requests_hash()
     }
 
+    fn block_access_list_hash(&self) -> Option<B256> {
+        self.header().block_access_list_hash()
+    }
+
+    fn slot_number(&self) -> Option<u64> {
+        self.header().slot_number()
+    }
+
     fn extra_data(&self) -> &Bytes {
         self.header().extra_data()
     }
@@ -784,6 +792,7 @@ mod rpc_compat {
         {
             let block_number = self.header().number();
             let base_fee = self.header().base_fee_per_gas();
+            let block_timestamp = self.header().timestamp();
             let block_length = self.rlp_length();
             let block_hash = Some(self.hash());
 
@@ -801,6 +810,7 @@ mod rpc_compat {
                         block_hash,
                         block_number: Some(block_number),
                         base_fee,
+                        block_timestamp: Some(block_timestamp),
                         index: Some(idx as u64),
                     };
 

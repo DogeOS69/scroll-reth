@@ -16,10 +16,10 @@ pub mod compact_ids {
     /// Identifier for removed bytecode variant.
     pub const REMOVED_BYTECODE_ID: u8 = 1;
 
-    /// Identifier for [`LegacyAnalyzed`](revm_bytecode::Bytecode::LegacyAnalyzed).
+    /// Identifier for analyzed legacy bytecode.
     pub const LEGACY_ANALYZED_BYTECODE_ID: u8 = 2;
 
-    /// Identifier for [`Eip7702`](revm_bytecode::Bytecode::Eip7702).
+    /// Identifier for EIP-7702 bytecode.
     pub const EIP7702_BYTECODE_ID: u8 = 4;
 }
 
@@ -47,9 +47,9 @@ impl Account {
     /// After `SpuriousDragon` empty account is defined as account with nonce == 0 && balance == 0
     /// && bytecode = None (or hash is [`KECCAK_EMPTY`]).
     pub fn is_empty(&self) -> bool {
-        self.nonce == 0 &&
-            self.balance.is_zero() &&
-            self.bytecode_hash.is_none_or(|hash| hash == KECCAK_EMPTY)
+        self.nonce == 0
+            && self.balance.is_zero()
+            && self.bytecode_hash.is_none_or(|hash| hash == KECCAK_EMPTY)
     }
 
     /// Returns an account bytecode's hash.
@@ -131,24 +131,23 @@ impl reth_codecs::Compact for Bytecode {
     {
         use compact_ids::{EIP7702_BYTECODE_ID, LEGACY_ANALYZED_BYTECODE_ID};
 
-        let bytecode = match &self.0 {
-            RevmBytecode::LegacyAnalyzed(analyzed) => analyzed.bytecode(),
-            RevmBytecode::Eip7702(eip7702) => eip7702.raw(),
-        };
+        let bytecode = self.0.bytecode();
         buf.put_u32(bytecode.len() as u32);
         buf.put_slice(bytecode.as_ref());
-        let len = match &self.0 {
-            // [`REMOVED_BYTECODE_ID`] has been removed.
-            RevmBytecode::LegacyAnalyzed(analyzed) => {
+        let len = if self.0.is_eip7702() {
+            buf.put_u8(EIP7702_BYTECODE_ID);
+            1
+        } else {
+            // [`REMOVED_BYTECODE_ID`] has been removed. The jump table bytes remain in the compact
+            // format so records written by this version can still be read by older decoders.
+            let jump_table =
+                self.0.legacy_jump_table().expect("non-EIP-7702 bytecode must be legacy analyzed");
+            {
                 buf.put_u8(LEGACY_ANALYZED_BYTECODE_ID);
-                buf.put_u64(analyzed.original_len() as u64);
-                let map = analyzed.jump_table().as_slice();
+                buf.put_u64(self.0.len() as u64);
+                let map = jump_table.as_slice();
                 buf.put_slice(map);
                 1 + 8 + map.len()
-            }
-            RevmBytecode::Eip7702(_) => {
-                buf.put_u8(EIP7702_BYTECODE_ID);
-                1
             }
         };
         len + bytecode.len() + 4
@@ -175,25 +174,10 @@ impl reth_codecs::Compact for Bytecode {
             }
             LEGACY_ANALYZED_BYTECODE_ID => {
                 let original_len = buf.read_u64::<byteorder::BigEndian>().unwrap() as usize;
-                // When saving jumptable, its length is getting aligned to u8 boundary. Thus, we
-                // need to re-calculate the internal length of bitvec and truncate it when loading
-                // jumptables to avoid inconsistencies during `Compact` roundtrip.
-                let jump_table_len = if buf.len() * 8 >= bytes.len() {
-                    // Use length of padded bytecode if we can fit it
-                    bytes.len()
-                } else {
-                    // Otherwise, use original_len
-                    original_len
-                };
-                Self(RevmBytecode::new_analyzed(
-                    bytes,
-                    original_len,
-                    revm_bytecode::JumpTable::from_slice(buf, jump_table_len),
-                ))
+                Self(RevmBytecode::new_legacy(bytes.slice(..original_len)))
             }
             EIP7702_BYTECODE_ID => {
-                // EIP-7702 bytecode objects will be decoded from the raw bytecode
-                Self(RevmBytecode::new_raw(bytes))
+                Self(RevmBytecode::new_eip7702_raw(bytes).expect("invalid EIP-7702 bytecode"))
             }
             _ => unreachable!("Junk data in database: unknown Bytecode variant"),
         };
@@ -237,6 +221,7 @@ impl From<Account> for AccountInfo {
             balance: reth_acc.balance,
             nonce: reth_acc.nonce,
             code_hash: reth_acc.bytecode_hash.unwrap_or(KECCAK_EMPTY),
+            account_id: None,
             code: None,
         }
     }
@@ -247,7 +232,6 @@ mod tests {
     use super::*;
     use alloy_primitives::{hex_literal::hex, B256, U256};
     use reth_codecs::Compact;
-    use revm_bytecode::{JumpTable, LegacyAnalyzedBytecode};
 
     #[test]
     fn test_account() {
@@ -291,29 +275,40 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
-    fn test_bytecode() {
-        let mut buf = vec![];
-        let bytecode = Bytecode::new_raw(Bytes::default());
-        let len = bytecode.to_compact(&mut buf);
-        assert_eq!(len, 14);
-
+    fn test_legacy_bytecode_compact_roundtrip() {
         let mut buf = vec![];
         let bytecode = Bytecode::new_raw(Bytes::from(&hex!("ffff")));
         let len = bytecode.to_compact(&mut buf);
-        assert_eq!(len, 17);
-
-        let mut buf = vec![];
-        let bytecode = Bytecode(RevmBytecode::LegacyAnalyzed(LegacyAnalyzedBytecode::new(
-            Bytes::from(&hex!("ff00")),
-            2,
-            JumpTable::from_slice(&[0], 2),
-        )));
-        let len = bytecode.to_compact(&mut buf);
-        assert_eq!(len, 16);
+        assert_eq!(len, buf.len());
 
         let (decoded, remainder) = Bytecode::from_compact(&buf, len);
         assert_eq!(decoded, bytecode);
+        assert!(remainder.is_empty());
+    }
+
+    #[test]
+    fn test_eip7702_bytecode_compact_roundtrip() {
+        let raw = Bytes::from(&hex!("ef0100deadbeef00000000000000000000000000000000"));
+        let bytecode = Bytecode::new_raw_checked(raw).unwrap();
+        assert!(bytecode.0.is_eip7702());
+
+        let mut buf = vec![];
+        let len = bytecode.to_compact(&mut buf);
+        assert_eq!(len, buf.len());
+
+        let (decoded, remainder) = Bytecode::from_compact(&buf, len);
+        assert_eq!(decoded, bytecode);
+        assert!(decoded.0.is_eip7702());
+        assert!(remainder.is_empty());
+    }
+
+    #[test]
+    fn test_analyzed_legacy_bytecode_golden_decode() {
+        let encoded = hex!("00000002ff0002000000000000000200");
+
+        let (decoded, remainder) = Bytecode::from_compact(&encoded, encoded.len());
+
+        assert_eq!(decoded, Bytecode(RevmBytecode::new_legacy(Bytes::from(&hex!("ff00")))));
         assert!(remainder.is_empty());
     }
 

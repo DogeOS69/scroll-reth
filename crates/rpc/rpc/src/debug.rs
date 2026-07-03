@@ -550,7 +550,6 @@ where
                     .map_err(|err| EthApiError::Internal(err.into()))?;
                 #[allow(unused_mut)]
                 let mut statedb = block_executor.into_state();
-                witness_record.record_executed_state(&statedb);
                 #[cfg(feature = "scroll")]
                 {
                     use reth_chainspec::Hardforks;
@@ -564,6 +563,7 @@ where
                         statedb.load_next_message_index().map_err(|e| EthApiError::from(e))?;
                     }
                 }
+                witness_record.record_executed_state(&statedb);
 
                 let ExecutionWitnessRecord { hashed_state, codes, keys, lowest_block_number } =
                     witness_record;

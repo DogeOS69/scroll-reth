@@ -47,11 +47,11 @@ impl BlockDataHint {
 
     /// Returns `true` if the [`BlockDataHint`] is empty.
     pub const fn is_empty(&self) -> bool {
-        self.extra_data.is_none() &&
-            self.state_root.is_none() &&
-            self.coinbase.is_none() &&
-            self.nonce.is_none() &&
-            self.difficulty.is_none()
+        self.extra_data.is_none()
+            && self.state_root.is_none()
+            && self.coinbase.is_none()
+            && self.nonce.is_none()
+            && self.difficulty.is_none()
     }
 }
 
@@ -78,6 +78,8 @@ impl<'a> arbitrary::Arbitrary<'a> for ScrollPayloadAttributes {
                 suggested_fee_recipient: alloy_primitives::Address::arbitrary(u)?,
                 withdrawals: None,
                 parent_beacon_block_root: Some(alloy_primitives::B256::arbitrary(u)?),
+                slot_number: None,
+                target_gas_limit: None,
             },
             transactions: Some(Vec::arbitrary(u)?),
             no_tx_pool: bool::arbitrary(u)?,
@@ -102,6 +104,8 @@ mod test {
                 suggested_fee_recipient: Address::ZERO,
                 withdrawals: Default::default(),
                 parent_beacon_block_root: Some(B256::ZERO),
+                slot_number: None,
+                target_gas_limit: None,
             },
             transactions: Some(vec![b"hello".to_vec().into()]),
             no_tx_pool: true,

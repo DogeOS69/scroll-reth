@@ -15,7 +15,8 @@ use crate::{
     FromTxWithCompressionInfo, ScrollDefaultPrecompilesFactory, ScrollEvm, ScrollEvmFactory,
     ScrollPrecompilesFactory, ScrollTransactionIntoTxEnv, ToTxWithCompressionInfo,
 };
-use alloc::{boxed::Box, format, vec::Vec};
+
+use alloc::{boxed::Box, format, sync::Arc, vec::Vec};
 use alloy_consensus::{Transaction, TxReceipt, Typed2718};
 use alloy_eips::Encodable2718;
 use alloy_evm::{
@@ -37,7 +38,6 @@ use revm::{
 use revm_scroll::builder::ScrollContext;
 use scroll_alloy_consensus::L1_MESSAGE_TRANSACTION_TYPE;
 use scroll_alloy_hardforks::{ScrollHardfork, ScrollHardforks};
-use std::sync::Arc;
 
 /// Compression info is a pair of (compression ratio, compressed size).
 pub type ScrollTxCompressionInfo = (U256, usize);

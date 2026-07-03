@@ -23,6 +23,7 @@ mod system_caller;
 
 extern crate alloc;
 
+use alloc::sync::Arc;
 use alloy_evm::{precompiles::PrecompilesMap, Database, Evm, EvmEnv, EvmFactory};
 use alloy_primitives::{Address, Bytes};
 use core::{
@@ -46,7 +47,6 @@ use revm_scroll::{
     precompile::ScrollPrecompileProvider,
     ScrollSpecId,
 };
-use std::sync::Arc;
 
 use reth_scroll_chainspec::{ChainConfig, ScrollChainConfig};
 /// Re-export `TX_L1_FEE_PRECISION_U256` from `revm-scroll` for convenience.

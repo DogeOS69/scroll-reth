@@ -555,12 +555,12 @@ where
                     use reth_chainspec::Hardforks;
                     use reth_scroll_evm::{LoadWithdrawRoot, ScrollHardfork};
 
-                    statedb.load_withdraw_root().map_err(|e| EthApiError::from(e))?;
+                    statedb.load_withdraw_root().map_err(EthApiError::from)?;
 
                     if chain_spec
                         .is_fork_active_at_timestamp(ScrollHardfork::Tsuki, block.timestamp())
                     {
-                        statedb.load_next_message_index().map_err(|e| EthApiError::from(e))?;
+                        statedb.load_next_message_index().map_err(EthApiError::from)?;
                     }
                 }
                 witness_record.record_executed_state(&statedb);

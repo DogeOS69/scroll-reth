@@ -22,7 +22,7 @@ use reth_evm::{execute::Executor, ConfigureEvm, EvmEnvFor};
 use reth_primitives_traits::{
     Block as BlockTrait, BlockBody, BlockTy, ReceiptWithBloom, RecoveredBlock,
 };
-use reth_revm::{db::State, witness::ExecutionWitnessRecord};
+use reth_revm::witness::ExecutionWitnessRecord;
 use reth_rpc_api::DebugApiServer;
 use reth_rpc_convert::RpcTxReq;
 use reth_rpc_eth_api::{
@@ -541,15 +541,29 @@ where
         let (mut exec_witness, lowest_block_number) = self
             .eth_api()
             .spawn_with_state_at_block(block.parent_hash(), move |eth_api, mut db| {
-                let block_executor = eth_api.evm_config().executor(&mut db);
+                let mut block_executor = eth_api.evm_config().executor(&mut db);
 
                 let mut witness_record = ExecutionWitnessRecord::default();
 
                 let _ = block_executor
-                    .execute_with_state_closure(&block, |statedb: &State<_>| {
-                        witness_record.record_executed_state(statedb);
-                    })
+                    .execute_one(&block)
                     .map_err(|err| EthApiError::Internal(err.into()))?;
+                #[allow(unused_mut)]
+                let mut statedb = block_executor.into_state();
+                witness_record.record_executed_state(&statedb);
+                #[cfg(feature = "scroll")]
+                {
+                    use reth_chainspec::Hardforks;
+                    use reth_scroll_evm::{LoadWithdrawRoot, ScrollHardfork};
+
+                    statedb.load_withdraw_root().map_err(|e| EthApiError::from(e))?;
+
+                    if chain_spec
+                        .is_fork_active_at_timestamp(ScrollHardfork::Tsuki, block.timestamp())
+                    {
+                        statedb.load_next_message_index().map_err(|e| EthApiError::from(e))?;
+                    }
+                }
 
                 let ExecutionWitnessRecord { hashed_state, codes, keys, lowest_block_number } =
                     witness_record;

@@ -9960,6 +9960,7 @@ dependencies = [
  "reth-rpc-eth-api",
  "reth-rpc-eth-types",
  "reth-rpc-server-types",
+ "reth-scroll-evm",
  "reth-storage-api",
  "reth-tasks",
  "reth-testing-utils",
@@ -11308,7 +11309,7 @@ dependencies = [
 [[package]]
 name = "revm-scroll"
 version = "0.1.0"
-source = "git+https://github.com/scroll-tech/scroll-revm?branch=feat%2Fv103#f28e7a788b27db547e5b5c6ed9c8e16fcb83efbd"
+source = "git+https://github.com/DogeOS69/dogeos-revm?tag=tsuki-v0.2#89ae727391ec749ef5f7a885f1887d23330f71ab"
 dependencies = [
  "auto_impl",
  "enumn",

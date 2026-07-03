@@ -92,6 +92,9 @@ thiserror.workspace = true
 derive_more.workspace = true
 itertools.workspace = true
 
+# scroll
+reth-scroll-evm = { workspace = true, optional = true }
+
 [dev-dependencies]
 reth-ethereum-primitives.workspace = true
 reth-testing-utils.workspace = true
@@ -109,4 +112,4 @@ js-tracer = [
     "reth-rpc-eth-types/js-tracer",
     "reth-rpc-eth-api/js-tracer",
 ]
-scroll = []
+scroll = ["dep:reth-scroll-evm"]

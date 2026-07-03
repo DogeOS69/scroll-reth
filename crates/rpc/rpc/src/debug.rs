@@ -535,6 +535,9 @@ where
     ) -> Result<ExecutionWitness, Eth::Error> {
         let block_number = block.header().number();
 
+        #[cfg(feature = "scroll")]
+        let chain_spec = self.provider().chain_spec();
+
         let (mut exec_witness, lowest_block_number) = self
             .eth_api()
             .spawn_with_state_at_block(block.parent_hash(), move |eth_api, mut db| {

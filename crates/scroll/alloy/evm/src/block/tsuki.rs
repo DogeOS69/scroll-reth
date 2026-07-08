@@ -2,7 +2,7 @@
 //!
 //! On the first block of the Tsuki fork, Dogeos performed a transition to the Tsuki fork state,
 //! changes to the protocol:
-//!   1. Set the code of address `0x0x530000000000000000000000000000000000d09e` to NativeDogeToken
+//!   1. Set the code of address `0x530000000000000000000000000000000000d09e` to NativeDogeToken
 //!      bytecode.
 
 use alloc::vec;
@@ -94,12 +94,13 @@ mod tests {
         let bundle = state.take_bundle();
         let token = bundle.state.get(&NATIVE_DOGE_TOKEN_ADDRESS).unwrap();
 
+        let code_hash = TSUKI_NATIVE_DOGE_TOKEN_BYTECODE_HASH;
         let bytecode = Bytecode::new_raw(TSUKI_NATIVE_DOGE_TOKEN_BYTECODE);
         let expected_info = AccountInfo {
             nonce: 1,
             balance: U256::ZERO,
-            code_hash: TSUKI_NATIVE_DOGE_TOKEN_BYTECODE_HASH,
-            code: Some(bytecode),
+            code_hash,
+            code: Some(bytecode.clone()),
             ..Default::default()
         };
 
@@ -111,6 +112,9 @@ mod tests {
                 ..Default::default()
             })
         );
+
+        // check deployed contract
+        assert_eq!(bundle.contracts.get(&code_hash).unwrap(), &bytecode);
 
         Ok(())
     }

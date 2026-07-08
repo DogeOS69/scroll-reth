@@ -34,7 +34,7 @@ pub(super) fn apply_tsuki_hard_fork<DB: Database>(
         state.load_cache_account(NATIVE_DOGE_TOKEN_ADDRESS).map_err(EvmDatabaseError::Database)?;
 
     let old_info = token.account_info().unwrap_or_default();
-    if old_info.nonce != 0 {
+    if old_info.nonce != 0 || !old_info.is_empty_code_hash() {
         return Ok(());
     }
 
@@ -89,7 +89,11 @@ mod tests {
     #[test]
     fn test_apply_tsuki_fork_does_not_overwrite_existing_predeploy() -> eyre::Result<()> {
         let bytecode = Bytecode::new_raw(bytes!("00"));
-        let predeploy_info = AccountInfo::from_bytecode(bytecode);
+        let predeploy_info = AccountInfo {
+            code_hash: bytecode.hash_slow(),
+            code: Some(bytecode),
+            ..Default::default()
+        };
 
         let mut db = CacheDB::new(EmptyDB::default());
         db.insert_account_info(NATIVE_DOGE_TOKEN_ADDRESS, predeploy_info);

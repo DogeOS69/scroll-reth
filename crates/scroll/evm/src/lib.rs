@@ -31,7 +31,7 @@ use alloc::sync::Arc;
 
 use alloy_primitives::{Address, BlockNumber, BlockTimestamp};
 use reth_primitives_traits::NodePrimitives;
-use reth_scroll_chainspec::{ChainConfig, ScrollChainConfig, ScrollChainSpec};
+use reth_scroll_chainspec::{ChainConfig, ScrollChainConfig, ScrollChainSpec, SCROLL_MAINNET};
 use reth_scroll_primitives::ScrollPrimitives;
 use revm_scroll::ScrollSpecId;
 pub use scroll_alloy_evm::{
@@ -62,6 +62,15 @@ impl<ChainSpec: ScrollHardforks + ChainConfig<Config = ScrollChainConfig>>
     /// Creates a new [`ScrollEvmConfig`] with the given chain spec for Scroll chains.
     pub fn scroll(chain_spec: Arc<ChainSpec>) -> Self {
         Self::new(chain_spec, ScrollRethReceiptBuilder::default())
+    }
+}
+
+impl<N: NodePrimitives, P: Default>
+    ScrollEvmConfig<ScrollChainSpec, N, ScrollRethReceiptBuilder, P>
+{
+    /// Creates a new [`ScrollEvmConfig`] with the default Scroll chain spec.
+    pub fn scroll_mainnet() -> Self {
+        Self::new(SCROLL_MAINNET.clone(), ScrollRethReceiptBuilder::default())
     }
 }
 
@@ -120,6 +129,11 @@ pub fn spec_id_at_timestamp_and_number(
     chain_spec: impl ScrollHardforks,
 ) -> ScrollSpecId {
     if chain_spec
+        .scroll_fork_activation(ScrollHardfork::Tsuki)
+        .active_at_timestamp_or_number(timestamp, number)
+    {
+        ScrollSpecId::TSUKI
+    } else if chain_spec
         .scroll_fork_activation(ScrollHardfork::GalileoV2)
         .active_at_timestamp_or_number(timestamp, number) ||
         chain_spec

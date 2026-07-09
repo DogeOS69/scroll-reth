@@ -6,7 +6,7 @@
 
 mod block;
 pub use block::{
-    curie, feynman, galileo_v2, EvmExt, ReceiptBuilderCtx, ScrollBlockExecutionCtx,
+    curie, feynman, galileo_v2, tsuki, EvmExt, ReceiptBuilderCtx, ScrollBlockExecutionCtx,
     ScrollBlockExecutor, ScrollBlockExecutorFactory, ScrollReceiptBuilder, ScrollTxCompressionInfo,
     ScrollTxCompressionInfos,
 };
@@ -40,7 +40,7 @@ use revm::{
 use revm_scroll::{
     builder::{
         DefaultScrollContext, EuclidEipActivations, FeynmanEipActivations, ScrollBuilder,
-        ScrollContext,
+        ScrollContext, TsukiEipActivations,
     },
     instructions::ScrollInstructions,
     precompile::ScrollPrecompileProvider,
@@ -226,6 +226,7 @@ impl<P: ScrollPrecompilesFactory> EvmFactory for ScrollEvmFactory<P> {
                 .with_cfg(input.cfg_env)
                 .maybe_with_eip_7702()
                 .maybe_with_eip_7623()
+                .maybe_with_eip_7825()
                 .build_scroll_with_inspector(NoOpInspector {})
                 .with_precompiles(P::with_spec(spec_id)),
             inspect: false,
@@ -246,6 +247,7 @@ impl<P: ScrollPrecompilesFactory> EvmFactory for ScrollEvmFactory<P> {
                 .with_cfg(input.cfg_env)
                 .maybe_with_eip_7702()
                 .maybe_with_eip_7623()
+                .maybe_with_eip_7825()
                 .build_scroll_with_inspector(inspector)
                 .with_precompiles(P::with_spec(spec_id)),
             inspect: true,
@@ -265,6 +267,6 @@ pub struct ScrollDefaultPrecompilesFactory;
 
 impl ScrollPrecompilesFactory for ScrollDefaultPrecompilesFactory {
     fn with_spec(spec_id: ScrollSpecId) -> PrecompilesMap {
-        PrecompilesMap::from_static(ScrollPrecompileProvider::new_with_spec(spec_id).precompiles())
+        ScrollPrecompileProvider::new_with_spec(spec_id).into_precompiles_map()
     }
 }

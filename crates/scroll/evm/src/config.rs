@@ -16,10 +16,7 @@ use revm::{
     context::{BlockEnv, CfgEnv, TxEnv},
     primitives::U256,
 };
-use revm_scroll::{
-    builder::{EuclidEipActivations, FeynmanEipActivations, TsukiEipActivations},
-    ScrollSpecId,
-};
+use revm_scroll::ScrollSpecId;
 use scroll_alloy_evm::{
     ScrollBlockExecutionCtx, ScrollBlockExecutorFactory, ScrollPrecompilesFactory,
     ScrollReceiptBuilder, ScrollTransactionIntoTxEnv,
@@ -38,6 +35,7 @@ use reth_evm::{ConfigureEngineEvm, EvmEnvFor, ExecutableTxIterator};
 use reth_primitives_traits::TxTy;
 #[cfg(feature = "std")]
 use reth_storage_api::errors::any::AnyError;
+use revm_scroll::builder::ScrollCfgExt;
 
 impl<ChainSpec, N, R, P> ConfigureEvm for ScrollEvmConfig<ChainSpec, N, R, P>
 where
@@ -73,12 +71,8 @@ where
         let chain_spec = self.chain_spec();
         let spec_id = self.spec_id_at_timestamp_and_number(header.timestamp(), header.number());
 
-        let cfg_env = CfgEnv::<ScrollSpecId>::default()
-            .with_spec_and_mainnet_gas_params(spec_id)
-            .with_chain_id(chain_spec.chain().id())
-            .maybe_with_eip_7702()
-            .maybe_with_eip_7623()
-            .maybe_with_eip_7825();
+        let cfg_env =
+            CfgEnv::<ScrollSpecId>::new_scroll(spec_id).with_chain_id(chain_spec.chain().id());
 
         // get coinbase from chain spec
         let coinbase = if let Some(vault_address) = chain_spec.chain_config().fee_vault_address {
@@ -114,9 +108,8 @@ where
         let chain_spec = self.chain_spec();
 
         // configure evm env based on parent block
-        let cfg_env = CfgEnv::<ScrollSpecId>::default()
-            .with_chain_id(chain_spec.chain().id())
-            .with_spec_and_mainnet_gas_params(spec_id);
+        let cfg_env =
+            CfgEnv::<ScrollSpecId>::new_scroll(spec_id).with_chain_id(chain_spec.chain().id());
 
         // get coinbase from chain spec
         let coinbase = if let Some(vault_address) = chain_spec.chain_config().fee_vault_address {
@@ -179,12 +172,7 @@ where
 
         let spec_id = self.spec_id_at_timestamp_and_number(timestamp, block_number);
 
-        let cfg_env = CfgEnv::new()
-            .with_chain_id(chain_spec.chain().id())
-            .with_spec_and_mainnet_gas_params(spec_id)
-            .maybe_with_eip_7702()
-            .maybe_with_eip_7623()
-            .maybe_with_eip_7825();
+        let cfg_env = CfgEnv::new_scroll(spec_id).with_chain_id(chain_spec.chain().id());
 
         // get coinbase from chain config.
         let coinbase =

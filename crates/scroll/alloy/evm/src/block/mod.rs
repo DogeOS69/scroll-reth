@@ -30,7 +30,7 @@ use alloy_evm::{
 use alloy_primitives::{B256, U256};
 use reth_scroll_chainspec::{ChainConfig, ScrollChainConfig};
 use revm::{
-    context::{result::InvalidTransaction, Block, TxEnv},
+    context::{result::InvalidTransaction, Block, ContextTr, TxEnv},
     database::State,
     handler::PrecompileProvider,
     interpreter::InterpreterResult,
@@ -396,11 +396,11 @@ where
     }
 
     fn with_l1_data_fee_buffer_check(&mut self, enabled: bool) {
-        self.ctx_mut().cfg.require_l1_data_fee_buffer = enabled;
+        self.chain_mut().policy.require_l1_data_fee_buffer = enabled;
     }
 
     fn l1_fee(&self) -> Option<U256> {
-        let l1_block_info = &self.ctx().chain;
+        let l1_block_info = &self.ctx().chain.l1_block_info;
         let transaction_rlp_bytes = self.ctx().tx.rlp_bytes.as_ref()?;
         let compression_ratio = self.ctx().tx.compression_ratio;
         let compressed_size = self.ctx().tx.compressed_size;

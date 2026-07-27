@@ -1,0 +1,252 @@
+use crate::{
+    builder::ScrollBuilder,
+    handler::ScrollHandler,
+    l1block::L1BlockInfo,
+    test_utils::{context, BENEFICIARY, CALLER},
+    transaction::L1_MESSAGE_TYPE,
+    ScrollSpecId,
+};
+use std::boxed::Box;
+
+use crate::{builder::ScrollCfgExt, test_utils::MIN_TRANSACTION_COST};
+use revm::{
+    context::{
+        result::{EVMError, ExecutionResult::Halt, HaltReason, InvalidTransaction, ResultAndState},
+        ContextTr, JournalTr, Transaction,
+    },
+    context_interface::cfg::{gas::TOTAL_COST_FLOOR_PER_TOKEN, gas_params::GasId, GasParams},
+    handler::{EthFrame, EvmTr, FrameResult, Handler},
+    interpreter::{CallOutcome, Gas, InstructionResult, InterpreterResult},
+    state::Bytecode,
+    ExecuteEvm,
+};
+use revm_primitives::{bytes, eip7702, hardfork::SpecId, U256};
+
+#[test]
+fn test_l1_message_validate_lacking_funds() -> Result<(), Box<dyn core::error::Error>> {
+    let ctx = context().modify_tx_chained(|tx| tx.base.tx_type = L1_MESSAGE_TYPE);
+    let mut evm = ctx.build_scroll();
+    let handler = ScrollHandler::<_, EVMError<_>, EthFrame<_>>::new();
+
+    // pre execution includes fees deduction, which should be skipped for l1 messages.
+    handler.pre_execution(&mut evm)?;
+
+    Ok(())
+}
+
+#[test]
+fn test_l1_message_load_accounts() -> Result<(), Box<dyn core::error::Error>> {
+    let ctx = context().modify_tx_chained(|tx| tx.base.tx_type = L1_MESSAGE_TYPE);
+    let mut evm = ctx.build_scroll();
+    let handler = ScrollHandler::<_, EVMError<_>, EthFrame<_>>::new();
+    handler.load_accounts(&mut evm)?;
+
+    // l1 block info should not be loaded for l1 messages.
+    let l1_block_info = evm.ctx().chain.l1_block_info.clone();
+    assert_eq!(l1_block_info, L1BlockInfo::default());
+
+    Ok(())
+}
+
+#[test]
+fn test_l1_message_should_not_deduct_caller() -> Result<(), Box<dyn core::error::Error>> {
+    let ctx = context().modify_tx_chained(|tx| tx.base.tx_type = L1_MESSAGE_TYPE);
+
+    let mut evm = ctx.build_scroll();
+    let handler = ScrollHandler::<_, EVMError<_>, EthFrame<_>>::new();
+    handler.load_accounts(&mut evm)?;
+    handler.validate_against_state_and_deduct_caller(&mut evm)?;
+
+    // nonce should be increase and caller should have same balance as the start (0).
+    let ctx = evm.ctx_mut();
+    let caller_account = ctx.journal_mut().load_account(CALLER)?;
+    assert_eq!(caller_account.info.balance, U256::ZERO);
+    assert_eq!(caller_account.info.nonce, 1);
+
+    Ok(())
+}
+
+#[test]
+fn test_l1_message_last_frame_result() -> Result<(), Box<dyn core::error::Error>> {
+    let ctx = context().modify_tx_chained(|tx| tx.base.tx_type = L1_MESSAGE_TYPE);
+
+    let mut evm = ctx.build_scroll();
+    let mut handler = ScrollHandler::<_, EVMError<_>, EthFrame<_>>::new();
+    let mut gas = Gas::new(21000);
+    gas.set_refund(10);
+    gas.set_spent(10);
+    let mut result = FrameResult::Call(CallOutcome::new(
+        InterpreterResult { result: InstructionResult::Return, output: Default::default(), gas },
+        0..0,
+    ));
+    handler.last_frame_result(&mut evm, &mut result)?;
+
+    // refund should be 0 for l1 messages.
+    gas.set_refund(0);
+    assert_eq!(result.gas(), &gas);
+
+    Ok(())
+}
+
+#[test]
+fn test_l1_message_should_not_refund() -> Result<(), Box<dyn core::error::Error>> {
+    let ctx = context().modify_tx_chained(|tx| tx.base.tx_type = L1_MESSAGE_TYPE);
+
+    let mut evm = ctx.build_scroll();
+    let handler = ScrollHandler::<_, EVMError<_>, EthFrame<_>>::new();
+    let mut gas = Gas::new(21000);
+    gas.set_refund(10);
+    gas.set_spent(10);
+    let mut result = FrameResult::Call(CallOutcome::new(
+        InterpreterResult { result: InstructionResult::Return, output: Default::default(), gas },
+        0..0,
+    ));
+    handler.refund(&mut evm, &mut result, 0);
+
+    // gas should not have been updated
+    assert_eq!(result.gas(), &gas);
+
+    Ok(())
+}
+
+#[test]
+fn test_l1_message_should_not_reward_beneficiary() -> Result<(), Box<dyn core::error::Error>> {
+    let ctx = context().modify_tx_chained(|tx| tx.base.tx_type = L1_MESSAGE_TYPE);
+
+    let mut evm = ctx.build_scroll();
+    let handler = ScrollHandler::<_, EVMError<_>, EthFrame<_>>::new();
+    let gas = Gas::new_spent(21000);
+    let mut result = FrameResult::Call(CallOutcome::new(
+        InterpreterResult { result: InstructionResult::Return, output: Default::default(), gas },
+        0..0,
+    ));
+    handler.load_accounts(&mut evm)?;
+    handler.reward_beneficiary(&mut evm, &mut result)?;
+
+    // beneficiary should not see his balance increased for l1 message execution.
+    let ctx = evm.ctx_mut();
+    let beneficiary = ctx.journal_mut().load_account(BENEFICIARY)?;
+    assert_eq!(beneficiary.info.balance, U256::ZERO);
+
+    Ok(())
+}
+
+#[test]
+fn test_l1_message_should_revert_with_out_of_funds() -> Result<(), Box<dyn core::error::Error>> {
+    let ctx = context().modify_tx_chained(|tx| {
+        tx.base.tx_type = L1_MESSAGE_TYPE;
+        tx.base.value = U256::ONE;
+    });
+    let tx = ctx.tx.clone();
+    let mut evm = ctx.build_scroll();
+
+    let ResultAndState { result, .. } = evm.transact(tx)?;
+
+    // L1 message should pass pre-execution but revert with `OutOfFunds`.
+    let Halt { reason, gas, .. } = result else {
+        panic!("L1 message should halt when its value exceeds the caller balance");
+    };
+    assert_eq!(reason, HaltReason::OutOfFunds);
+    assert_eq!(gas.used(), MIN_TRANSACTION_COST.to::<u64>());
+
+    Ok(())
+}
+
+#[test]
+fn test_l1_message_should_pass_validation() -> Result<(), Box<dyn core::error::Error>> {
+    let ctx = context()
+        .modify_tx_chained(|tx| {
+            tx.base.tx_type = L1_MESSAGE_TYPE;
+            tx.base.value = U256::ONE;
+            tx.base.gas_price = 0;
+        })
+        // set the base fee of the block above the L1 message gas price to check it passes.
+        .modify_block_chained(|block| block.basefee = 100);
+    let mut evm = ctx.build_scroll();
+    let handler = ScrollHandler::<_, EVMError<_>, EthFrame<_>>::new();
+
+    handler.validate(&mut evm)?;
+
+    Ok(())
+}
+
+#[test]
+fn test_l1_message_should_pass_pre_execution() -> Result<(), Box<dyn core::error::Error>> {
+    let ctx = context()
+        .modify_tx_chained(|tx| {
+            tx.base.tx_type = L1_MESSAGE_TYPE;
+        })
+        // set the caller nonce to 1 and check pre execution passes.
+        .modify_journal_chained(|journal| {
+            journal.state.entry(CALLER).or_default().info.nonce += 1;
+        });
+    let mut evm = ctx.build_scroll();
+    let handler = ScrollHandler::<_, EVMError<_>, EthFrame<_>>::new();
+
+    handler.pre_execution(&mut evm)?;
+
+    Ok(())
+}
+
+#[test]
+fn test_l1_message_eip_3607() -> Result<(), Box<dyn core::error::Error>> {
+    let ctx = context()
+        .modify_tx_chained(|tx| {
+            tx.base.tx_type = L1_MESSAGE_TYPE;
+        })
+        // set the caller code to trigger EIP-3607.
+        .modify_journal_chained(|journal| {
+            journal.state.entry(CALLER).or_default().info.code =
+                Some(Bytecode::new_legacy([1u8; 2].into()));
+        });
+    let mut evm = ctx.build_scroll();
+    let handler = ScrollHandler::<_, EVMError<_>, EthFrame<_>>::new();
+
+    let err = handler.pre_execution(&mut evm).unwrap_err();
+    assert_eq!(err, EVMError::Transaction(InvalidTransaction::RejectCallerWithCode));
+
+    Ok(())
+}
+
+#[test]
+fn test_l1_message_should_not_have_floor_gas_as_gas_used() -> Result<(), Box<dyn core::error::Error>>
+{
+    let ctx = context()
+        .modify_cfg_chained(|cfg| cfg.set_scroll_spec(ScrollSpecId::FEYNMAN))
+        .modify_tx_chained(|tx| {
+            tx.base.data =
+                bytes!("0x000000000123456789abcdef00000000123456789abcdef00000000123456789abcdef");
+            tx.base.tx_type = L1_MESSAGE_TYPE;
+            tx.base.caller = CALLER;
+            tx.base.gas_limit = 200000;
+            tx.base.value = U256::ONE;
+        });
+    let tx = ctx.tx.clone();
+    let mut evm = ctx.build_scroll();
+    let handler = ScrollHandler::<_, EVMError<_>, EthFrame<_>>::new();
+    let initial_gas = handler.validate_initial_tx_gas(&mut evm)?;
+
+    // Feynman activates EIP-7623, but L1 messages must not charge the resulting floor gas.
+    assert_eq!(initial_gas.floor_gas, 22_070);
+
+    let res = evm.transact(tx.clone())?;
+
+    // Intrinsic gas excludes EIP-7623's floor gas for an L1 message.
+    let mut gas_params = GasParams::new_spec(SpecId::SHANGHAI);
+    gas_params.override_gas([
+        (GasId::tx_eip7702_per_empty_account_cost(), eip7702::PER_EMPTY_ACCOUNT_COST),
+        (GasId::tx_floor_cost_per_token(), TOTAL_COST_FLOOR_PER_TOKEN),
+        (GasId::tx_floor_cost_base_gas(), 21000),
+    ]);
+    let expected_init_gas = gas_params
+        .initial_tx_gas(tx.input(), tx.kind().is_create(), 0, 0, tx.authorization_list_len() as u64)
+        .initial_gas;
+
+    let Halt { reason, gas, .. } = res.result else {
+        panic!("L1 message should halt when its value exceeds the caller balance");
+    };
+    assert_eq!(reason, HaltReason::OutOfFunds);
+    assert_eq!(gas.spent_sub_refunded(), expected_init_gas);
+
+    Ok(())
+}

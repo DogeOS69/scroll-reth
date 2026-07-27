@@ -29,6 +29,7 @@ reth-codecs = { workspace = true, optional = true }
 reth-codecs-derive = { workspace = true, optional = true }
 
 # required by reth-codecs
+bytes = { workspace = true, optional = true }
 modular-bitfield = { workspace = true, optional = true }
 
 # serde
@@ -60,6 +61,7 @@ std = [
     "derive_more/std",
     "serde_json/std",
     "serde_with?/std",
+    "bytes?/std",
 ]
 k256 = [
     "alloy-primitives/k256",
@@ -73,6 +75,7 @@ kzg = [
 reth-codec = [
     "dep:reth-codecs",
     "dep:reth-codecs-derive",
+    "dep:bytes",
     "modular-bitfield",
     "std",
 ]
@@ -94,6 +97,7 @@ serde = [
     "alloy-eips/serde",
     "rand/serde",
     "reth-codecs?/serde",
+    "bytes?/serde",
 ]
 serde-bincode-compat = [
     "dep:serde_with",

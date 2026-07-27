@@ -22,7 +22,6 @@ alloy-consensus = { workspace = true, default-features = false }
 alloy-network = { workspace = true, default-features = false }
 alloy-primitives = { workspace = true, default-features = false }
 alloy-rpc-types-eth = { workspace = true, default-features = false }
-alloy-signer = { workspace = true, default-features = false }
 
 [features]
 std = [

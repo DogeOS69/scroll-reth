@@ -14,7 +14,6 @@ use reth_node_builder::{
     FullNodeTypesAdapter, Node, NodeAddOns, NodeTypesWithDBAdapter,
 };
 use reth_node_core::primitives::RecoveredBlock;
-use reth_payload_builder::EthPayloadBuilderAttributes;
 use reth_provider::providers::BlockchainProvider;
 use revm::state::EvmState;
 use std::{marker::PhantomData, path::Path, sync::Arc};
@@ -317,15 +316,12 @@ where
         let chain_spec =
             self.chain_spec.clone().ok_or_else(|| eyre!("Chain specification is required"))?;
 
-        let attributes_generator = move |timestamp| {
-            let attributes = PayloadAttributes {
-                timestamp,
-                prev_randao: B256::ZERO,
-                suggested_fee_recipient: alloy_primitives::Address::ZERO,
-                withdrawals: Some(vec![]),
-                parent_beacon_block_root: Some(B256::ZERO),
-            };
-            EthPayloadBuilderAttributes::new(B256::ZERO, attributes)
+        let attributes_generator = move |timestamp| PayloadAttributes {
+            timestamp,
+            prev_randao: B256::ZERO,
+            suggested_fee_recipient: alloy_primitives::Address::ZERO,
+            withdrawals: Some(vec![]),
+            parent_beacon_block_root: Some(B256::ZERO),
         };
 
         crate::setup_import::setup_engine_with_chain_import(
@@ -341,9 +337,7 @@ where
 
     /// Create a static attributes generator that doesn't capture any instance data
     fn create_static_attributes_generator<N>(
-    ) -> impl Fn(u64) -> <<N as NodeTypes>::Payload as PayloadTypes>::PayloadBuilderAttributes
-           + Copy
-           + use<N, I>
+    ) -> impl Fn(u64) -> <<N as NodeTypes>::Payload as PayloadTypes>::PayloadAttributes + Copy + use<N, I>
     where
         N: NodeBuilderHelper<Payload = I>,
         <<N as Node<
@@ -364,16 +358,14 @@ where
         >,
     {
         move |timestamp| {
-            let attributes = PayloadAttributes {
+            PayloadAttributes {
                 timestamp,
                 prev_randao: B256::ZERO,
                 suggested_fee_recipient: alloy_primitives::Address::ZERO,
                 withdrawals: Some(vec![]),
                 parent_beacon_block_root: Some(B256::ZERO),
-            };
-            <<N as NodeTypes>::Payload as PayloadTypes>::PayloadBuilderAttributes::from(
-                EthPayloadBuilderAttributes::new(B256::ZERO, attributes),
-            )
+            }
+            .into()
         }
     }
 

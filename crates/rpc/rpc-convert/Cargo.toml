@@ -16,25 +16,18 @@ workspace = true
 reth-primitives-traits.workspace = true
 reth-storage-api = { workspace = true, optional = true }
 reth-evm.workspace = true
-reth-ethereum-primitives.workspace = true
+reth-rpc-traits.workspace = true
 
 # ethereum
 alloy-primitives.workspace = true
 alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
-alloy-signer.workspace = true
 alloy-consensus.workspace = true
 alloy-network.workspace = true
 alloy-json-rpc.workspace = true
 alloy-evm = { workspace = true, features = ["rpc"] }
 
-# optimism
-op-alloy-consensus = { workspace = true, optional = true }
-op-alloy-rpc-types = { workspace = true, optional = true }
-op-alloy-network = { workspace = true, optional = true }
-
 # scroll
 scroll-alloy-consensus = { workspace = true, optional = true }
-scroll-alloy-rpc-types = { workspace = true, optional = true }
 reth-scroll-primitives = { workspace = true, optional = true }
 
 # io
@@ -51,19 +44,11 @@ serde_json.workspace = true
 
 [features]
 default = []
-op = [
-    "dep:op-alloy-consensus",
-    "dep:op-alloy-rpc-types",
-    "dep:op-alloy-network",
-    "reth-evm/op",
-    "reth-primitives-traits/op",
-    "alloy-evm/op",
-]
 scroll = [
     "dep:scroll-alloy-consensus",
-    "dep:scroll-alloy-rpc-types",
     "dep:reth-scroll-primitives",
     "dep:reth-storage-api",
     "reth-evm/scroll-alloy-traits",
     "reth-primitives-traits/scroll-alloy-traits",
+    "reth-rpc-traits/scroll",
 ]

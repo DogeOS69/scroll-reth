@@ -22,6 +22,18 @@ pub struct ScrollPayloadAttributes {
     pub gas_limit: Option<u64>,
 }
 
+impl From<PayloadAttributes> for ScrollPayloadAttributes {
+    fn from(payload_attributes: PayloadAttributes) -> Self {
+        Self {
+            payload_attributes,
+            transactions: None,
+            no_tx_pool: false,
+            block_data_hint: BlockDataHint::none(),
+            gas_limit: None,
+        }
+    }
+}
+
 /// Block data provided as a hint to the payload attributes.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

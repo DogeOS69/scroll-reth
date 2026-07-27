@@ -74,18 +74,19 @@ where
             )
         };
 
+        let rt = runner.runtime();
         match self.cli.command {
             Commands::Node(command) => {
                 runner.run_command_until_exit(|ctx| command.execute(ctx, launcher))
             }
             Commands::Import(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<ScrollNode, _>(components))
+                runner.run_blocking_until_ctrl_c(command.execute::<ScrollNode, _>(components, rt))
             }
             Commands::Init(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<ScrollNode>())
+                runner.run_blocking_until_ctrl_c(command.execute::<ScrollNode>(rt))
             }
             Commands::InitState(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<ScrollNode>())
+                runner.run_blocking_until_ctrl_c(command.execute::<ScrollNode>(rt))
             }
             Commands::DumpGenesis(command) => runner.run_blocking_until_ctrl_c(command.execute()),
             Commands::Db(command) => {
@@ -109,7 +110,8 @@ where
     pub fn init_tracing(&mut self) -> Result<()> {
         if self.guard.is_none() {
             let layers = self.layers.take().unwrap_or_default();
-            self.guard = self.cli.logs.init_tracing_with_layers(layers)?;
+            let enable_reload = self.cli.command.debug_namespace_enabled();
+            self.guard = self.cli.logs.init_tracing_with_layers(layers, enable_reload)?;
             info!(target: "reth::cli", "Initialized tracing, debug log directory: {}", self.cli.logs.log_file_directory);
         }
         Ok(())

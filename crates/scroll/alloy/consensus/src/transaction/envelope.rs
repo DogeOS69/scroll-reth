@@ -515,6 +515,18 @@ impl TxHashRef for ScrollTxEnvelope {
     }
 }
 
+impl alloy_consensus::InMemorySize for ScrollTxEnvelope {
+    fn size(&self) -> usize {
+        match self {
+            Self::Legacy(tx) => tx.size(),
+            Self::Eip2930(tx) => tx.size(),
+            Self::Eip1559(tx) => tx.size(),
+            Self::Eip7702(tx) => tx.size(),
+            Self::L1Message(tx) => tx.as_ref().size(),
+        }
+    }
+}
+
 #[cfg(feature = "reth-codec")]
 const L1_MESSAGE_SIGNATURE: Signature = Signature::new(U256::ZERO, U256::ZERO, false);
 
@@ -548,6 +560,9 @@ impl Compact for ScrollTxEnvelope {
         CompactEnvelope::from_compact(buf, len)
     }
 }
+
+#[cfg(feature = "reth-codec")]
+reth_codecs::impl_compression_for_compact!(ScrollTxEnvelope);
 
 impl Encodable for ScrollTxEnvelope {
     fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {

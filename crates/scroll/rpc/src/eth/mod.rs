@@ -16,15 +16,15 @@ use reth_rpc::eth::core::EthApiInner;
 use reth_rpc_convert::{RpcConvert, RpcConverter, RpcTypes};
 use reth_rpc_eth_api::{
     helpers::{
-        pending_block::BuildPendingEnv, EthApiSpec, EthState, LoadFee, LoadPendingBlock, LoadState,
-        SpawnBlocking, Trace,
+        pending_block::BuildPendingEnv, EthApiSpec, EthState, GetBlockAccessList, LoadFee,
+        LoadPendingBlock, LoadState, SpawnBlocking, Trace,
     },
     EthApiTypes, FullEthApiServer, RpcNodeCore, RpcNodeCoreExt,
 };
 use reth_rpc_eth_types::{error::FromEvmError, EthStateCache, FeeHistoryCache, GasPriceOracle};
 use reth_tasks::{
     pool::{BlockingTaskGuard, BlockingTaskPool},
-    TaskSpawner,
+    Runtime,
 };
 use scroll_alloy_network::Scroll;
 use std::{fmt, marker::PhantomData, sync::Arc};
@@ -180,7 +180,7 @@ where
     Rpc: RpcConvert<Primitives = N::Primitives, Error = ScrollEthApiError>,
 {
     #[inline]
-    fn io_task_spawner(&self) -> impl TaskSpawner {
+    fn io_task_spawner(&self) -> &Runtime {
         self.inner.eth_api.task_spawner()
     }
 
@@ -198,6 +198,14 @@ where
     fn blocking_io_task_guard(&self) -> &Arc<Semaphore> {
         self.inner.eth_api.blocking_io_request_semaphore()
     }
+}
+
+impl<N, Rpc> GetBlockAccessList for ScrollEthApi<N, Rpc>
+where
+    N: RpcNodeCore,
+    ScrollEthApiError: FromEvmError<N::Evm>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = ScrollEthApiError, Evm = N::Evm>,
+{
 }
 
 impl<N, Rpc> LoadFee for ScrollEthApi<N, Rpc>

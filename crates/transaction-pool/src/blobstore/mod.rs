@@ -144,6 +144,7 @@ impl BlobStoreSize {
     }
 
     #[inline]
+    #[allow(deprecated)]
     pub(crate) fn sub_size(&self, sub: usize) {
         let _ = self.data_size.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
             Some(current.saturating_sub(sub))
@@ -161,6 +162,7 @@ impl BlobStoreSize {
     }
 
     #[inline]
+    #[allow(deprecated)]
     pub(crate) fn sub_len(&self, sub: usize) {
         let _ = self.num_blobs.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
             Some(current.saturating_sub(sub))

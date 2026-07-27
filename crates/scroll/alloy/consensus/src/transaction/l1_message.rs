@@ -3,7 +3,7 @@
 use crate::ScrollTxType;
 use std::vec::Vec;
 
-use alloy_consensus::{Sealable, Transaction, Typed2718};
+use alloy_consensus::{InMemorySize, Sealable, Transaction, Typed2718};
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718};
 use alloy_primitives::{
     keccak256,
@@ -51,6 +51,12 @@ pub struct TxL1Message {
     pub sender: Address,
     /// The input of the transaction.
     pub input: Bytes,
+}
+
+impl InMemorySize for TxL1Message {
+    fn size(&self) -> usize {
+        core::mem::size_of::<Self>() + self.input.len()
+    }
 }
 
 impl TxL1Message {

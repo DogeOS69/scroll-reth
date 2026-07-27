@@ -7,7 +7,7 @@ use derive_more::Deref;
 use revm_bytecode::{Bytecode as RevmBytecode, BytecodeDecodeError};
 use revm_state::AccountInfo;
 
-#[cfg(any(test, feature = "reth-codec"))]
+#[cfg(feature = "reth-codec")]
 /// Identifiers used in [`Compact`](reth_codecs::Compact) encoding of [`Bytecode`].
 pub mod compact_ids {
     /// Identifier for legacy raw bytecode.
@@ -16,19 +16,19 @@ pub mod compact_ids {
     /// Identifier for removed bytecode variant.
     pub const REMOVED_BYTECODE_ID: u8 = 1;
 
-    /// Identifier for [`LegacyAnalyzed`](revm_bytecode::Bytecode::LegacyAnalyzed).
+    /// Identifier for legacy analyzed bytecode.
     pub const LEGACY_ANALYZED_BYTECODE_ID: u8 = 2;
 
-    /// Identifier for [`Eip7702`](revm_bytecode::Bytecode::Eip7702).
+    /// Identifier for EIP-7702 bytecode.
     pub const EIP7702_BYTECODE_ID: u8 = 4;
 }
 
 /// An Ethereum account.
 #[cfg_attr(any(test, feature = "serde"), derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-#[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
-#[cfg_attr(any(test, feature = "reth-codec"), derive(reth_codecs::Compact))]
-#[cfg_attr(any(test, feature = "reth-codec"), reth_codecs::add_arbitrary_tests(compact))]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+#[cfg_attr(feature = "reth-codec", derive(reth_codecs::Compact))]
+#[cfg_attr(feature = "reth-codec", reth_codecs::add_arbitrary_tests(compact))]
 pub struct Account {
     /// Account nonce.
     pub nonce: u64,
@@ -91,7 +91,11 @@ impl From<revm_state::Account> for Account {
 
 impl From<TrieAccount> for Account {
     fn from(value: TrieAccount) -> Self {
-        Self { balance: value.balance, nonce: value.nonce, bytecode_hash: Some(value.code_hash) }
+        Self {
+            balance: value.balance,
+            nonce: value.nonce,
+            bytecode_hash: (value.code_hash != KECCAK_EMPTY).then_some(value.code_hash),
+        }
     }
 }
 
@@ -100,6 +104,9 @@ impl InMemorySize for Account {
         size_of::<Self>()
     }
 }
+
+#[cfg(feature = "reth-codec")]
+reth_codecs::impl_compression_for_compact!(Account);
 
 /// Bytecode for an account.
 ///
@@ -129,7 +136,7 @@ impl Bytecode {
     }
 }
 
-#[cfg(any(test, feature = "reth-codec"))]
+#[cfg(feature = "reth-codec")]
 impl reth_codecs::Compact for Bytecode {
     fn to_compact<B>(&self, buf: &mut B) -> usize
     where
@@ -137,25 +144,23 @@ impl reth_codecs::Compact for Bytecode {
     {
         use compact_ids::{EIP7702_BYTECODE_ID, LEGACY_ANALYZED_BYTECODE_ID};
 
-        let bytecode = match &self.0 {
-            RevmBytecode::LegacyAnalyzed(analyzed) => analyzed.bytecode(),
-            RevmBytecode::Eip7702(eip7702) => eip7702.raw(),
-        };
+        let bytecode = self.0.bytes_ref();
         buf.put_u32(bytecode.len() as u32);
         buf.put_slice(bytecode.as_ref());
-        let len = match &self.0 {
+        let len = if self.0.is_legacy() {
             // [`REMOVED_BYTECODE_ID`] has been removed.
-            RevmBytecode::LegacyAnalyzed(analyzed) => {
+            if let Some(jump_table) = self.0.legacy_jump_table() {
                 buf.put_u8(LEGACY_ANALYZED_BYTECODE_ID);
-                buf.put_u64(analyzed.original_len() as u64);
-                let map = analyzed.jump_table().as_slice();
+                buf.put_u64(self.0.len() as u64);
+                let map = jump_table.as_slice();
                 buf.put_slice(map);
                 1 + 8 + map.len()
+            } else {
+                unreachable!("legacy bytecode must contain a jump table")
             }
-            RevmBytecode::Eip7702(_) => {
-                buf.put_u8(EIP7702_BYTECODE_ID);
-                1
-            }
+        } else {
+            buf.put_u8(EIP7702_BYTECODE_ID);
+            1
         };
         len + bytecode.len() + 4
     }
@@ -207,6 +212,9 @@ impl reth_codecs::Compact for Bytecode {
     }
 }
 
+#[cfg(feature = "reth-codec")]
+reth_codecs::impl_compression_for_compact!(Bytecode);
+
 impl From<&GenesisAccount> for Account {
     fn from(value: &GenesisAccount) -> Self {
         Self {
@@ -249,14 +257,12 @@ impl From<Account> for AccountInfo {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std", feature = "reth-codec"))]
 mod tests {
-    use std::sync::Arc;
-
     use super::*;
     use alloy_primitives::{hex_literal::hex, B256, U256};
     use reth_codecs::Compact;
-    use revm_bytecode::{JumpTable, LegacyAnalyzedBytecode};
+    use revm_bytecode::JumpTable;
 
     #[test]
     fn test_account() {
@@ -313,12 +319,11 @@ mod tests {
         assert_eq!(len, 17);
 
         let mut buf = vec![];
-        let bytecode =
-            Bytecode(RevmBytecode::LegacyAnalyzed(Arc::new(LegacyAnalyzedBytecode::new(
-                Bytes::from(&hex!("ff00")),
-                2,
-                JumpTable::from_slice(&[0], 2),
-            ))));
+        let bytecode = Bytecode(RevmBytecode::new_analyzed(
+            Bytes::from(&hex!("ff00")),
+            2,
+            JumpTable::from_slice(&[0], 2),
+        ));
         let len = bytecode.to_compact(&mut buf);
         assert_eq!(len, 16);
 

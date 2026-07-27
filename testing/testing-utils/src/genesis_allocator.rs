@@ -3,7 +3,7 @@
 
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{
-    map::{AddressMap, Entry},
+    map::{AddressMap, Entry, HashMap},
     Address, Bytes, B256, U256,
 };
 use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
@@ -43,7 +43,7 @@ use std::{collections::BTreeMap, fmt};
 /// ```
 pub struct GenesisAllocator<'a> {
     /// The genesis alloc to be built.
-    alloc: AddressMap<GenesisAccount>,
+    alloc: HashMap<Address, GenesisAccount>,
     /// The rng to use for generating key pairs.
     rng: Box<dyn RngCore + 'a>,
 }
@@ -54,7 +54,7 @@ impl<'a> GenesisAllocator<'a> {
     where
         R: RngCore,
     {
-        Self { alloc: AddressMap::default(), rng: Box::new(rng) }
+        Self { alloc: HashMap::default(), rng: Box::new(rng) }
     }
 
     /// Use the provided rng for generating key pairs.
@@ -190,13 +190,13 @@ impl<'a> GenesisAllocator<'a> {
 
     /// Build the genesis alloc.
     pub fn build(self) -> AddressMap<GenesisAccount> {
-        self.alloc
+        self.alloc.into_iter().collect()
     }
 }
 
 impl Default for GenesisAllocator<'_> {
     fn default() -> Self {
-        Self { alloc: AddressMap::default(), rng: Box::new(thread_rng()) }
+        Self { alloc: HashMap::default(), rng: Box::new(thread_rng()) }
     }
 }
 

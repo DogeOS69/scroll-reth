@@ -2,14 +2,14 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-use alloy_consensus::{TxEnvelope, TxType, TypedTransaction};
+use alloy_consensus::TxType;
 pub use alloy_network::*;
 use alloy_primitives::{Address, Bytes, ChainId, TxKind, U256};
 use alloy_provider::fillers::{
     ChainIdFiller, GasFiller, JoinFill, NonceFiller, RecommendedFillers,
 };
 use alloy_rpc_types_eth::AccessList;
-use scroll_alloy_consensus::{self, ScrollTxEnvelope, ScrollTxType, ScrollTypedTransaction};
+use scroll_alloy_consensus::{self, ScrollTxType, ScrollTypedTransaction};
 use scroll_alloy_rpc_types::ScrollTransactionRequest;
 
 /// Types for a Scroll-stack network.
@@ -194,45 +194,6 @@ impl TransactionBuilder<Scroll> for ScrollTransactionRequest {
         wallet: &W,
     ) -> Result<<Scroll as Network>::TxEnvelope, TransactionBuilderError<Scroll>> {
         Ok(wallet.sign_request(self).await?)
-    }
-}
-
-impl NetworkWallet<Scroll> for EthereumWallet {
-    fn default_signer_address(&self) -> Address {
-        NetworkWallet::<Ethereum>::default_signer_address(self)
-    }
-
-    fn has_signer_for(&self, address: &Address) -> bool {
-        NetworkWallet::<Ethereum>::has_signer_for(self, address)
-    }
-
-    fn signer_addresses(&self) -> impl Iterator<Item = Address> {
-        NetworkWallet::<Ethereum>::signer_addresses(self)
-    }
-
-    async fn sign_transaction_from(
-        &self,
-        sender: Address,
-        tx: ScrollTypedTransaction,
-    ) -> alloy_signer::Result<ScrollTxEnvelope> {
-        let tx = match tx {
-            ScrollTypedTransaction::Legacy(tx) => TypedTransaction::Legacy(tx),
-            ScrollTypedTransaction::Eip2930(tx) => TypedTransaction::Eip2930(tx),
-            ScrollTypedTransaction::Eip1559(tx) => TypedTransaction::Eip1559(tx),
-            ScrollTypedTransaction::Eip7702(tx) => TypedTransaction::Eip7702(tx),
-            ScrollTypedTransaction::L1Message(_) => {
-                return Err(alloy_signer::Error::other("not implemented for deposit tx"))
-            }
-        };
-        let tx = NetworkWallet::<Ethereum>::sign_transaction_from(self, sender, tx).await?;
-
-        Ok(match tx {
-            TxEnvelope::Eip1559(tx) => ScrollTxEnvelope::Eip1559(tx),
-            TxEnvelope::Eip2930(tx) => ScrollTxEnvelope::Eip2930(tx),
-            TxEnvelope::Eip7702(tx) => ScrollTxEnvelope::Eip7702(tx),
-            TxEnvelope::Legacy(tx) => ScrollTxEnvelope::Legacy(tx),
-            _ => unreachable!(),
-        })
     }
 }
 

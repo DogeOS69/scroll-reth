@@ -1,0 +1,43 @@
+[package]
+name = "revm-scroll"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+alloy-evm = { workspace = true, default-features = false }
+
+# revm
+revm = { workspace = true, default-features = false }
+revm-primitives = { workspace = true, default-features = false }
+revm-inspector = { version = "17.0.0", default-features = false }
+
+# misc
+auto_impl.workspace = true
+enumn = { version = "0.1" }
+once_cell = { workspace = true, default-features = false, features = ["alloc"] }
+serde = { workspace = true, features = ["derive"], optional = true, default-features = false }
+
+[features]
+default = ["std", "c-kzg", "secp256k1", "portable", "blst"]
+std = [
+    "alloy-evm/std",
+    "once_cell/std",
+    "serde?/std",
+    "revm/std",
+    "revm-primitives/std",
+    "revm-inspector/std",
+]
+hashbrown = ["revm/hashbrown", "revm-primitives/hashbrown"]
+serde = ["dep:serde", "revm/serde", "revm-primitives/serde", "revm-inspector/serde"]
+portable = ["revm/portable"]
+
+test-utils = []
+
+# See comments in `revm-precompile`
+secp256k1 = ["revm/secp256k1"]
+c-kzg = ["revm/c-kzg"]
+blst = ["revm/blst"]
+
+[dev-dependencies]
+rstest = "0.26.1"

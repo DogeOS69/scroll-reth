@@ -61,6 +61,10 @@ where
         self.inner.transaction().clone()
     }
 
+    fn consensus_ref(&self) -> Recovered<&Self::Consensus> {
+        Recovered::new_unchecked(self.inner.transaction(), self.inner.transaction().signer())
+    }
+
     fn into_consensus(self) -> Recovered<Self::Consensus> {
         self.inner.transaction
     }

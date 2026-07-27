@@ -65,7 +65,7 @@ impl<HttpMiddleware, RpcMiddleware> IpcServer<HttpMiddleware, RpcMiddleware> {
 
 impl<HttpMiddleware, RpcMiddleware> IpcServer<HttpMiddleware, RpcMiddleware>
 where
-    RpcMiddleware: for<'a> Layer<RpcService, Service: RpcServiceT> + Clone + Send + 'static,
+    RpcMiddleware: Layer<RpcService, Service: RpcServiceT> + Clone + Send + 'static,
     HttpMiddleware: Layer<
             TowerServiceNoHttp<RpcMiddleware>,
             Service: Service<
@@ -368,7 +368,7 @@ pub struct TowerServiceNoHttp<L> {
 
 impl<RpcMiddleware> Service<String> for TowerServiceNoHttp<RpcMiddleware>
 where
-    RpcMiddleware: for<'a> Layer<RpcService>,
+    RpcMiddleware: Layer<RpcService>,
     for<'a> <RpcMiddleware as Layer<RpcService>>::Service:
         Send + Sync + 'static + RpcServiceT<MethodResponse = MethodResponse>,
 {
@@ -532,9 +532,8 @@ async fn to_ipc_service<S, T>(
                break
             }
             item = rx_item.next() => {
-                if let Some(item) = item {
-                    conn.push_back(item.to_string());
-                }
+                let Some(item) = item else { break };
+                conn.push_back(item.to_string());
             }
             _ = &mut stopped => {
                 // shutdown

@@ -46,7 +46,7 @@ mod tests {
 
     use alloy_consensus::{
         transaction::{Recovered, SignerRecoverable},
-        Block, BlockBody, Header, SignableTransaction, Signed, Transaction, TxLegacy,
+        Block, BlockBody, Header, SignableTransaction, Signed, Transaction, TxLegacy, TxReceipt,
     };
     use alloy_eips::{
         eip7702::{constants::PER_EMPTY_ACCOUNT_COST, Authorization, SignedAuthorization},
@@ -57,7 +57,7 @@ mod tests {
         precompiles::PrecompilesMap,
         Evm,
     };
-    use alloy_primitives::Sealed;
+    use alloy_primitives::{Bytes, Sealed};
     use reth_chainspec::MIN_TRANSACTION_GAS;
     use reth_evm::ConfigureEvm;
     use reth_primitives_traits::{NodePrimitives, RecoveredBlock, SignedTransaction};
@@ -211,6 +211,19 @@ mod tests {
                 }))
             }
         }
+    }
+
+    fn legacy_transaction_with_input(input: Bytes) -> ScrollTxEnvelope {
+        let pk = B256::random();
+        let tx = TxLegacy {
+            to: TxKind::Call(Address::ZERO),
+            chain_id: Some(SCROLL_CHAIN_ID),
+            gas_limit: 100_000,
+            input,
+            ..Default::default()
+        };
+        let signature = reth_primitives::sign_message(pk, tx.signature_hash()).unwrap();
+        ScrollTxEnvelope::Legacy(Signed::new_unhashed(tx, signature))
     }
 
     fn execute_block(
@@ -570,6 +583,29 @@ mod tests {
             expected_l1_fee,
             None,
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_feynman_applies_eip7623_calldata_floor_gas() -> eyre::Result<()> {
+        let transaction = legacy_transaction_with_input(Bytes::from(vec![1; 1000]));
+
+        let pre_feynman = execute_block(
+            vec![transaction.clone()],
+            CURIE_BLOCK_NUMBER + 1,
+            FEYNMAN_BLOCK_TIMESTAMP - 1,
+            None,
+        )?;
+        let feynman = execute_block(
+            vec![transaction],
+            CURIE_BLOCK_NUMBER + 1,
+            FEYNMAN_BLOCK_TIMESTAMP,
+            None,
+        )?;
+
+        assert_eq!(pre_feynman.receipts[0].cumulative_gas_used(), 37_000);
+        assert_eq!(feynman.receipts[0].cumulative_gas_used(), 61_000);
+
         Ok(())
     }
 

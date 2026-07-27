@@ -116,7 +116,6 @@ members = [
     "crates/scroll/primitives",
     "crates/scroll/txpool",
     "crates/scroll/rpc",
-    "crates/scroll/revm",
     "crates/stages/api/",
     "crates/stages/stages/",
     "crates/stages/types/",
@@ -467,7 +466,7 @@ revm-primitives = { version = "22.1.0", default-features = false }
 revm-interpreter = { version = "34.0.0", default-features = false }
 revm-database-interface = { version = "10.0.0", default-features = false }
 revm-inspectors = "0.36.0"
-revm-scroll = { path = "crates/scroll/revm", default-features = false }
+revm-scroll = { git = "https://github.com/DogeOS69/dogeos-revm.git", rev = "1b87ecf17af029ac2f39e8ad362f3503ff2f4583", default-features = false }
 
 # eth
 alloy-dyn-abi = "1.5.6"

@@ -23,7 +23,7 @@ alloy-primitives.workspace = true
 alloy-rlp.workspace = true
 
 # scroll
-scroll-alloy-consensus.workspace = true
+scroll-alloy-consensus = { workspace = true, features = ["k256"] }
 
 # codec
 bytes = { workspace = true, optional = true }

@@ -15,6 +15,7 @@ workspace = true
 # alloy
 alloy-rlp.workspace = true
 alloy-consensus.workspace = true
+alloy-eips.workspace = true
 alloy-primitives.workspace = true
 
 # scroll-alloy
@@ -29,6 +30,7 @@ reth-basic-payload-builder.workspace = true
 reth-chainspec.workspace = true
 reth-chain-state.workspace = true
 reth-evm.workspace = true
+reth-execution-cache.workspace = true
 reth-execution-types.workspace = true
 reth-payload-builder.workspace = true
 reth-payload-primitives.workspace = true
@@ -37,6 +39,7 @@ reth-revm.workspace = true
 reth-storage-api.workspace = true
 reth-transaction-pool.workspace = true
 reth-payload-util.workspace = true
+reth-trie-parallel.workspace = true
 
 # scroll
 reth-scroll-chainspec.workspace = true
@@ -59,4 +62,6 @@ test-utils = [
     "reth-chainspec/test-utils",
     "reth-evm/test-utils",
     "reth-revm/test-utils",
+    "reth-execution-cache/test-utils",
+    "reth-trie-parallel/test-utils",
 ]

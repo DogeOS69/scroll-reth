@@ -47,7 +47,7 @@ alloy-rpc-client.workspace = true
 alloy-transport-http.workspace = true
 
 # reqwest
-reqwest = { workspace = true, default-features = false, features = ["rustls-tls-native-roots"] }
+reqwest = { workspace = true, default-features = false, features = ["rustls", "rustls-native-certs"] }
 
 # tracing
 tracing.workspace = true

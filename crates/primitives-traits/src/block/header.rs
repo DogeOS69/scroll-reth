@@ -1,7 +1,7 @@
 //! Block header data primitive.
 
-use crate::{InMemorySize, MaybeCompact, MaybeSerde, MaybeSerdeBincodeCompat};
-use alloy_primitives::{Bytes, Sealable};
+use crate::{InMemorySize, MaybeCompact, MaybeSerde};
+use alloy_primitives::Sealable;
 use core::{fmt, hash::Hash};
 
 /// Re-exported alias
@@ -30,23 +30,9 @@ pub trait BlockHeader:
     + Sealable
     + InMemorySize
     + MaybeSerde
-    + MaybeSerdeBincodeCompat
     + AsRef<Self>
     + 'static
-    + BlockHeaderMut
 {
 }
 
 impl BlockHeader for alloy_consensus::Header {}
-
-/// Returns a mutable reference to fields of the header.
-pub trait BlockHeaderMut {
-    /// Mutable reference to the extra data.
-    fn extra_data_mut(&mut self) -> &mut Bytes;
-}
-
-impl BlockHeaderMut for alloy_consensus::Header {
-    fn extra_data_mut(&mut self) -> &mut Bytes {
-        &mut self.extra_data
-    }
-}

@@ -438,4 +438,6 @@ mod compact {
             (receipt.into(), buf)
         }
     }
+
+    reth_codecs::impl_compression_for_compact!(ScrollReceipt);
 }

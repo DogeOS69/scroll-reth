@@ -176,7 +176,7 @@ mod tests {
     fn pool(
     ) -> ScrollTransactionPool<MockEthProvider<ScrollPrimitives, Arc<ScrollChainSpec>>, NoopBlobStore>
     {
-        let executor = TaskExecutor::default();
+        let executor = TaskExecutor::test();
         let blob_store = NoopBlobStore::default();
         let client =
             MockEthProvider::<ScrollPrimitives, _>::new().with_chain_spec(SCROLL_MAINNET.clone());
@@ -227,9 +227,7 @@ mod tests {
     async fn add_rollup_fee_cap_boundary_transaction(
         chain_spec: Arc<ScrollChainSpec>,
     ) -> PoolResult<AddedTransactionOutcome> {
-        let handle = tokio::runtime::Handle::current();
-        let executor =
-            TaskExecutor::with_existing_handle(handle).expect("failed to create task executor");
+        let executor = TaskExecutor::test();
         let blob_store = NoopBlobStore::default();
         let signer = Default::default();
         let client =
@@ -324,7 +322,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_one_rollup_fee_exceeds_limit() {
-        let executor = TaskExecutor::default();
+        let executor = TaskExecutor::test();
         let blob_store = NoopBlobStore::default();
         let signer = Default::default();
         let client =
@@ -386,7 +384,7 @@ mod tests {
     #[tokio::test]
     async fn test_validate_one_rollup_fee_exceeds_balance() {
         // create the client.
-        let executor = TaskExecutor::default();
+        let executor = TaskExecutor::test();
         let blob_store = NoopBlobStore::default();
         let signer = Default::default();
         let client =
@@ -508,7 +506,7 @@ mod tests {
         ));
         let tx = ScrollPooledTransaction::new(Recovered::new_unchecked(tx, signer), 200);
 
-        let executor = TaskExecutor::default();
+        let executor = TaskExecutor::test();
 
         // Test 1: With L1 data fee buffer ENABLED - should reject (requires 2x L1 cost)
         let validator = TransactionValidationTaskExecutor::eth_builder(

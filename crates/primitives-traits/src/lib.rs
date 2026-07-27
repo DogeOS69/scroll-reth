@@ -17,8 +17,6 @@
 //! ## Feature Flags
 //!
 //! - `arbitrary`: Adds `proptest` and `arbitrary` support for primitive types.
-//! - `op`: Implements the traits for various [op-alloy](https://github.com/alloy-rs/op-alloy)
-//!   types.
 //! - `reth-codec`: Enables db codec support for reth types including zstd compression for certain
 //!   types.
 //! - `rpc-compat`: Adds RPC compatibility functions for the types in this crate, e.g. rpc type
@@ -96,14 +94,6 @@
 //! - **Hashing**: Block hashing is expensive. Use [`SealedBlock`] to cache hashes.
 //! - **Recovery**: Sender recovery is CPU-intensive. Use [`RecoveredBlock`] to cache results.
 //! - **Parallel Recovery**: Enable the `rayon` feature for parallel transaction recovery.
-//!
-//! ## Bincode serde compatibility
-//!
-//! The [bincode-crate](https://github.com/bincode-org/bincode) is often used by additional tools when sending data over the network.
-//! `bincode` crate doesn't work well with optionally serializable serde fields, but some of the consensus types require optional serialization for RPC compatibility. Read more: <https://github.com/bincode-org/bincode/issues/326>
-//!
-//! As a workaround this crate introduces the `SerdeBincodeCompat` trait (available with the
-//! `serde-bincode-compat` feature) used to provide a bincode compatible serde representation.
 
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
@@ -116,6 +106,10 @@
 
 #[macro_use]
 extern crate alloc;
+
+/// Re-export of [`quanta::Instant`] for high-resolution timing with minimal overhead.
+#[cfg(feature = "std")]
+pub use quanta::Instant as FastInstant;
 
 /// Common constants.
 pub mod constants;
@@ -148,7 +142,7 @@ pub use block::{
     Block, FullBlock, RecoveredBlock, SealedBlock,
 };
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std", feature = "reth-codec"))]
 mod withdrawal;
 pub use alloy_eips::eip2718::WithEncoded;
 
@@ -157,36 +151,26 @@ pub mod crypto;
 mod error;
 pub use error::{GotExpected, GotExpectedBoxed};
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std", feature = "reth-codec"))]
 mod log;
 pub use alloy_primitives::{logs_bloom, Log, LogData};
 
 pub mod proofs;
 
 mod storage;
-pub use storage::{StorageEntry, StorageSlotKey, ValueWithSubKey};
+pub use storage::{StorageEntry, ValueWithSubKey};
 
 pub mod sync;
 
-mod extended;
-pub use extended::Extended;
+#[cfg(feature = "serde-bincode-compat")]
+pub mod serde_bincode_compat;
+
 /// Common header types
 pub mod header;
 pub use header::{Header, SealedHeader, SealedHeaderFor};
 
-/// Bincode-compatible serde implementations for common abstracted types in Reth.
-///
-/// `bincode` crate doesn't work with optionally serializable serde fields, but some of the
-/// Reth types require optional serialization for RPC compatibility. This module makes so that
-/// all fields are serialized.
-///
-/// Read more: <https://github.com/bincode-org/bincode/issues/326>
-#[cfg(feature = "serde-bincode-compat")]
-pub mod serde_bincode_compat;
-
 /// Heuristic size trait
-pub mod size;
-pub use size::InMemorySize;
+pub use alloy_consensus::InMemorySize;
 
 /// Rayon utilities
 #[cfg(feature = "rayon")]
@@ -224,19 +208,6 @@ pub trait MaybeCompact {}
 impl<T> MaybeCompact for T where T: reth_codecs::Compact {}
 #[cfg(not(feature = "reth-codec"))]
 impl<T> MaybeCompact for T {}
-
-/// Helper trait that requires serde bincode compatibility implementation.
-#[cfg(feature = "serde-bincode-compat")]
-pub trait MaybeSerdeBincodeCompat: crate::serde_bincode_compat::SerdeBincodeCompat {}
-/// Noop. Helper trait that would require serde bincode compatibility implementation if
-/// `serde-bincode-compat` feature were enabled.
-#[cfg(not(feature = "serde-bincode-compat"))]
-pub trait MaybeSerdeBincodeCompat {}
-
-#[cfg(feature = "serde-bincode-compat")]
-impl<T> MaybeSerdeBincodeCompat for T where T: crate::serde_bincode_compat::SerdeBincodeCompat {}
-#[cfg(not(feature = "serde-bincode-compat"))]
-impl<T> MaybeSerdeBincodeCompat for T {}
 
 /// Utilities for testing.
 #[cfg(any(test, feature = "arbitrary", feature = "test-utils"))]

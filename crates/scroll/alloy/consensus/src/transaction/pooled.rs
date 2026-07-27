@@ -5,7 +5,7 @@ use crate::{ScrollTxEnvelope, ScrollTxType};
 use alloy_consensus::{
     error::ValueError,
     transaction::{RlpEcdsaDecodableTx, TxEip1559, TxEip2930, TxHashRef, TxLegacy},
-    SignableTransaction, Signed, Transaction, TxEip7702, TxEnvelope, Typed2718,
+    InMemorySize, SignableTransaction, Signed, Transaction, TxEip7702, TxEnvelope, Typed2718,
 };
 use alloy_eips::{
     eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718, IsTyped2718},
@@ -34,6 +34,17 @@ pub enum ScrollPooledTransaction {
     Eip1559(Signed<TxEip1559>),
     /// A [`TxEip7702`] transaction tagged with type 4.
     Eip7702(Signed<TxEip7702>),
+}
+
+impl InMemorySize for ScrollPooledTransaction {
+    fn size(&self) -> usize {
+        match self {
+            Self::Legacy(tx) => tx.size(),
+            Self::Eip2930(tx) => tx.size(),
+            Self::Eip1559(tx) => tx.size(),
+            Self::Eip7702(tx) => tx.size(),
+        }
+    }
 }
 
 impl ScrollPooledTransaction {

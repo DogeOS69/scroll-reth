@@ -4,6 +4,7 @@ use super::ScrollPayloadBuilderError;
 use crate::config::{PayloadBuildingBreaker, ScrollBuilderConfig};
 
 use alloy_consensus::{Transaction, Typed2718};
+use alloy_eips::eip2718::{Decodable2718, WithEncoded};
 use alloy_primitives::U256;
 use alloy_rlp::Encodable;
 use core::fmt::Debug;
@@ -15,14 +16,13 @@ use reth_basic_payload_builder::{
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::{
     block::{BlockExecutionError, BlockValidationError},
-    execute::{BlockBuilder, BlockBuilderOutcome, ProviderError},
+    execute::{BlockBuilder, BlockBuilderOutcome, BlockExecutor, ProviderError},
     ConfigureEvm, Database, Evm,
 };
+use reth_execution_cache::CachedStateProvider;
 use reth_execution_types::BlockExecutionOutput;
 use reth_payload_builder::PayloadId;
-use reth_payload_primitives::{
-    BuiltPayloadExecutedBlock, PayloadBuilderAttributes, PayloadBuilderError,
-};
+use reth_payload_primitives::{BuiltPayloadExecutedBlock, PayloadAttributes, PayloadBuilderError};
 use reth_payload_util::{BestPayloadTransactions, NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{RecoveredBlock, SealedHeader, SignedTransaction, TxTy};
 use reth_revm::{cancelled::CancelOnDrop, database::StateProviderDatabase, db::State};
@@ -32,6 +32,7 @@ use reth_scroll_evm::{ScrollBaseFeeProvider, ScrollNextBlockEnvAttributes};
 use reth_scroll_primitives::{ScrollPrimitives, ScrollTransactionSigned};
 use reth_storage_api::{BaseFeeProvider, StateProvider, StateProviderFactory};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, TransactionPool};
+use reth_trie_parallel::state_root_task::StateRootHandle;
 use revm::context::Block;
 use scroll_alloy_hardforks::ScrollHardforks;
 use std::{boxed::Box, sync::Arc, vec::Vec};
@@ -125,7 +126,14 @@ where
     where
         Txs: PayloadTransactions<Transaction: PoolTransaction<Consensus = ScrollTransactionSigned>>,
     {
-        let BuildArguments { mut cached_reads, config, cancel, best_payload } = args;
+        let BuildArguments {
+            mut cached_reads,
+            execution_cache,
+            trie_handle,
+            config,
+            cancel,
+            best_payload,
+        } = args;
 
         let ctx = ScrollPayloadBuilderCtx {
             evm_config: self.evm_config.clone(),
@@ -137,14 +145,27 @@ where
 
         let builder = ScrollBuilder::new(best);
 
-        let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
-        let state = StateProviderDatabase::new(&state_provider);
+        let mut state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
+        if let Some(execution_cache) = execution_cache {
+            state_provider = Box::new(CachedStateProvider::new(
+                state_provider,
+                execution_cache.cache().clone(),
+                execution_cache.metrics().clone(),
+            ));
+        }
+        let state = StateProviderDatabase::new(state_provider.as_ref());
 
         if ctx.attributes().no_tx_pool {
-            builder.build(state, &state_provider, ctx, &self.builder_config)
+            builder.build(state, state_provider.as_ref(), ctx, &self.builder_config, trie_handle)
         } else {
             // sequencer mode we can reuse cachedreads from previous runs
-            builder.build(cached_reads.as_db_mut(state), &state_provider, ctx, &self.builder_config)
+            builder.build(
+                cached_reads.as_db_mut(state),
+                state_provider.as_ref(),
+                ctx,
+                &self.builder_config,
+                trie_handle,
+            )
         }
         .map(|out| out.with_cached_reads(cached_reads))
     }
@@ -194,6 +215,8 @@ where
         let args = BuildArguments {
             config,
             cached_reads: Default::default(),
+            execution_cache: None,
+            trie_handle: None,
             cancel: Default::default(),
             best_payload: None,
         };
@@ -230,6 +253,7 @@ impl<Txs> ScrollBuilder<'_, Txs> {
         state_provider: impl StateProvider,
         ctx: ScrollPayloadBuilderCtx<EvmConfig, ChainSpec>,
         builder_config: &ScrollBuilderConfig,
+        mut trie_handle: Option<StateRootHandle>,
     ) -> Result<BuildOutcomeKind<ScrollBuiltPayload>, PayloadBuilderError>
     where
         EvmConfig: ConfigureEvm<
@@ -246,6 +270,11 @@ impl<Txs> ScrollBuilder<'_, Txs> {
         let mut db = State::builder().with_database(db).with_bundle_update().build();
 
         let mut builder = ctx.block_builder(&mut db, builder_config)?;
+
+        // Stream per-transaction state changes to the background sparse trie task, if enabled.
+        if let Some(ref handle) = trie_handle {
+            builder.executor_mut().set_state_hook(Some(Box::new(handle.state_hook())));
+        }
 
         // 1. apply pre-execution changes
         builder.apply_pre_execution_changes().map_err(|err| {
@@ -280,7 +309,37 @@ impl<Txs> ScrollBuilder<'_, Txs> {
         }
 
         let BlockBuilderOutcome { execution_result, hashed_state, trie_updates, mut block } =
-            builder.finish(state_provider)?;
+            if let Some(mut handle) = trie_handle.take() {
+                // Dropping the state hook signals that execution is complete and lets the
+                // background sparse trie task finalize its root.
+                builder.executor_mut().set_state_hook(None);
+
+                match handle.state_root() {
+                    Ok(outcome) => {
+                        tracing::debug!(
+                            target: "payload_builder",
+                            id = %ctx.payload_id(),
+                            state_root = ?outcome.state_root,
+                            "received state root from sparse trie"
+                        );
+                        builder.finish(
+                            state_provider,
+                            Some((outcome.state_root, Arc::unwrap_or_clone(outcome.trie_updates))),
+                        )?
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            target: "payload_builder",
+                            id = %ctx.payload_id(),
+                            %err,
+                            "sparse trie failed, falling back to sync state root"
+                        );
+                        builder.finish(state_provider, None)?
+                    }
+                }
+            } else {
+                builder.finish(state_provider, None)?
+            };
 
         // set the block fields using the hints from the payload attributes.
         let (mut scroll_block, senders) = block.split();
@@ -305,7 +364,7 @@ impl<Txs> ScrollBuilder<'_, Txs> {
         block = RecoveredBlock::new_unhashed(scroll_block, senders);
 
         let sealed_block = Arc::new(block.sealed_block().clone());
-        tracing::debug!(target: "payload_builder", id=%ctx.attributes().payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
+        tracing::debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
 
         // create the executed block data
         let executed = BuiltPayloadExecutedBlock {
@@ -379,8 +438,8 @@ where
     }
 
     /// Returns the unique id for this payload job.
-    pub fn payload_id(&self) -> PayloadId {
-        self.attributes().payload_id()
+    pub const fn payload_id(&self) -> PayloadId {
+        self.config.payload_id
     }
 
     /// Returns true if the fees are higher than the previous payload.
@@ -406,7 +465,10 @@ where
                 self.parent(),
                 ScrollNextBlockEnvAttributes {
                     timestamp: self.attributes().timestamp(),
-                    suggested_fee_recipient: self.attributes().suggested_fee_recipient(),
+                    suggested_fee_recipient: self
+                        .attributes()
+                        .payload_attributes
+                        .suggested_fee_recipient,
                     gas_limit: self
                         .attributes()
                         .gas_limit
@@ -433,7 +495,15 @@ where
         let block_gas_limit = builder.evm().block().gas_limit();
         let mut gas_spent_by_transactions = Vec::new();
 
-        for sequencer_tx in &self.attributes().transactions {
+        for encoded in self.attributes().transactions.as_deref().unwrap_or_default() {
+            let mut buf = encoded.as_ref();
+            let tx = ScrollTransactionSigned::decode_2718(&mut buf)
+                .map_err(PayloadBuilderError::other)?;
+            if !buf.is_empty() {
+                return Err(PayloadBuilderError::other(alloy_rlp::Error::UnexpectedLength))
+            }
+            let sequencer_tx = WithEncoded::new(encoded.clone(), tx);
+
             // A sequencer's block should never contain blob transactions.
             if sequencer_tx.value().is_eip4844() {
                 return Err(PayloadBuilderError::other(

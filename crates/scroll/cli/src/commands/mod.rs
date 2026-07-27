@@ -8,6 +8,7 @@ use reth_cli_commands::{
     config_cmd, db, dump_genesis, import, init_cmd, init_state, node, node::NoArgs, p2p, prune,
     stage,
 };
+use reth_rpc_server_types::RethRpcModule;
 use reth_scroll_chainspec::ScrollChainSpec;
 use std::{fmt, sync::Arc};
 
@@ -71,6 +72,14 @@ impl<C: ChainSpecParser<ChainSpec = ScrollChainSpec>, Ext: clap::Args + fmt::Deb
             Self::Prune(cmd) => cmd.chain_spec(),
             #[cfg(feature = "dev")]
             Self::TestVectors(_) => None,
+        }
+    }
+
+    /// Returns whether the node command enables the debug RPC namespace.
+    pub fn debug_namespace_enabled(&self) -> bool {
+        match self {
+            Self::Node(cmd) => cmd.rpc.is_namespace_enabled(RethRpcModule::Debug),
+            _ => false,
         }
     }
 }

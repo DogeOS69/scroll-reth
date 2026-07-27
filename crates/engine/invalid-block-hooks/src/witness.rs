@@ -756,9 +756,8 @@ mod tests {
 
     /// Creates test `TrieUpdates` with account nodes and removed nodes
     fn create_test_trie_updates() -> TrieUpdates {
-        use alloy_primitives::map::HashMap;
+        use alloy_primitives::map::{HashMap, HashSet};
         use reth_trie::{updates::TrieUpdates, BranchNodeCompact, Nibbles};
-        use std::collections::HashSet;
 
         let mut account_nodes = HashMap::default();
         let nibbles = Nibbles::from_nibbles_unchecked([0x1, 0x2, 0x3]);

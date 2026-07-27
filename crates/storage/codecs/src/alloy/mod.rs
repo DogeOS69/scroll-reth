@@ -18,14 +18,12 @@ cond_mod!(
     genesis_account,
     header,
     log,
+    receipt,
     signature,
     trie,
     txkind,
     withdrawal
 );
-
-#[cfg(all(feature = "op", feature = "std"))]
-pub mod optimism;
 
 pub mod transaction;
 

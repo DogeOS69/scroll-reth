@@ -95,7 +95,7 @@ mod tests {
 
     fn state() -> State<EmptyDBTyped<Infallible>> {
         let db = EmptyDBTyped::<Infallible>::new();
-        State::builder().with_database(db).with_bundle_update().without_state_clear().build()
+        State::builder().with_database(db).with_bundle_update().build()
     }
 
     #[allow(clippy::type_complexity)]
@@ -145,7 +145,9 @@ mod tests {
     }
 
     fn transaction(ty: ScrollTxType, gas_limit: u64) -> ScrollTxEnvelope {
-        let pk = B256::random();
+        // Keep signatures deterministic because their RLP integer lengths affect the encoded
+        // transaction size and therefore the expected Scroll L1 fee.
+        let pk = B256::with_last_byte(u8::from(ty) + 1);
         match ty {
             ScrollTxType::Legacy => {
                 let tx = TxLegacy {
@@ -183,9 +185,11 @@ mod tests {
                     address: Address::random(),
                     nonce: 0,
                 };
-                let signature =
-                    reth_primitives::sign_message(B256::random(), authorization.signature_hash())
-                        .unwrap();
+                let signature = reth_primitives::sign_message(
+                    B256::with_last_byte(2),
+                    authorization.signature_hash(),
+                )
+                .unwrap();
 
                 let tx = alloy_consensus::TxEip7702 {
                     to: Address::ZERO,
@@ -214,7 +218,7 @@ mod tests {
     }
 
     fn legacy_transaction_with_input(input: Bytes) -> ScrollTxEnvelope {
-        let pk = B256::random();
+        let pk = B256::with_last_byte(1);
         let tx = TxLegacy {
             to: TxKind::Call(Address::ZERO),
             chain_id: Some(SCROLL_CHAIN_ID),

@@ -91,6 +91,7 @@ where
             basefee: header.base_fee_per_gas().unwrap_or_default(),
             // EIP-4844 excess blob gas of this block, introduced in Cancun
             blob_excess_gas_and_price: None,
+            slot_num: 0,
         };
 
         Ok(EvmEnv { cfg_env, block_env })
@@ -127,6 +128,7 @@ where
             gas_limit: attributes.gas_limit,
             basefee: attributes.base_fee,
             blob_excess_gas_and_price: None,
+            slot_num: 0,
         };
 
         Ok(EvmEnv { cfg_env, block_env })
@@ -191,6 +193,7 @@ where
             gas_limit: payload.payload.as_v1().gas_limit,
             basefee: payload.payload.as_v1().base_fee_per_gas.to(),
             blob_excess_gas_and_price: None,
+            slot_num: 0,
         };
 
         Ok(EvmEnv { cfg_env, block_env })
@@ -400,6 +403,7 @@ mod tests {
             basefee: header.base_fee_per_gas.unwrap_or_default(),
             gas_limit: header.gas_limit,
             blob_excess_gas_and_price: None,
+            slot_num: 0,
         };
         assert_eq!(env.block_env, expected)
     }
@@ -448,6 +452,7 @@ mod tests {
             basefee: 155157341,
             gas_limit: header.gas_limit,
             blob_excess_gas_and_price: None,
+            slot_num: 0,
         };
         assert_eq!(block_env, expected);
 

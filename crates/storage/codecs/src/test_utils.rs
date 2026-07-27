@@ -83,7 +83,7 @@ impl UnusedBits {
 /// Tests decoding and re-encoding to ensure correctness.
 pub fn test_decode<T: crate::Compact>(buf: &[u8]) {
     let (decoded, _) = T::from_compact(buf, buf.len());
-    let mut encoded = Vec::with_capacity(buf.len());
+    let mut encoded = alloc::vec::Vec::with_capacity(buf.len());
 
     decoded.to_compact(&mut encoded);
     assert_eq!(buf, &encoded[..]);

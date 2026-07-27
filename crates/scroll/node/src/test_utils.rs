@@ -7,7 +7,6 @@ use reth_e2e_test_utils::{
 };
 use reth_node_api::NodeTypesWithDBAdapter;
 
-use reth_payload_builder::EthPayloadBuilderAttributes;
 use reth_provider::providers::BlockchainProvider;
 use reth_scroll_chainspec::{ScrollChainConfig, ScrollChainSpecBuilder};
 use scroll_alloy_rpc_types_engine::BlockDataHint;
@@ -74,8 +73,8 @@ pub fn scroll_payload_attributes(timestamp: u64) -> ScrollPayloadBuilderAttribut
     };
 
     ScrollPayloadBuilderAttributes {
-        payload_attributes: EthPayloadBuilderAttributes::new(B256::ZERO, attributes),
-        transactions: vec![],
+        payload_attributes: attributes,
+        transactions: Some(vec![]),
         no_tx_pool: false,
         block_data_hint: BlockDataHint::none(),
         gas_limit: None,

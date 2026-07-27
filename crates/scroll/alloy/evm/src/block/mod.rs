@@ -5,13 +5,13 @@ pub mod tsuki;
 
 pub use receipt_builder::{ReceiptBuilderCtx, ScrollReceiptBuilder};
 mod receipt_builder;
+mod state_changes;
 
 use crate::{
     block::{
         curie::apply_curie_hard_fork, feynman::apply_feynman_hard_fork,
         galileo_v2::apply_galileo_v2_hard_fork, tsuki::apply_tsuki_hard_fork,
     },
-    gas_price_oracle::L1_GAS_PRICE_ORACLE_ADDRESS,
     system_caller::ScrollSystemCaller,
     FromTxWithCompressionInfo, ScrollDefaultPrecompilesFactory, ScrollEvm, ScrollEvmFactory,
     ScrollPrecompilesFactory, ScrollTransactionIntoTxEnv, ToTxWithCompressionInfo,
@@ -23,7 +23,7 @@ use alloy_eips::Encodable2718;
 use alloy_evm::{
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockExecutorFactory,
-        BlockExecutorFor, BlockValidationError, ExecutableTx, OnStateHook, TxResult,
+        BlockExecutorFor, BlockValidationError, ExecutableTx, OnStateHook, StateDB, TxResult,
     },
     Database, Evm, EvmFactory, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
 };
@@ -31,7 +31,6 @@ use alloy_primitives::{B256, U256};
 use reth_scroll_chainspec::{ChainConfig, ScrollChainConfig};
 use revm::{
     context::{result::InvalidTransaction, Block, ContextTr, TxEnv},
-    database::State,
     handler::PrecompileProvider,
     interpreter::InterpreterResult,
     DatabaseCommit, Inspector,
@@ -59,6 +58,10 @@ impl<H> TxResult for ScrollTxResult<H> {
 
     fn result(&self) -> &revm::context::result::ResultAndState<H> {
         &self.result
+    }
+
+    fn into_result(self) -> revm::context::result::ResultAndState<H> {
+        self.result
     }
 }
 
@@ -118,11 +121,10 @@ where
     }
 }
 
-impl<'db, DB, E, R, Spec> ScrollBlockExecutor<E, R, Spec>
+impl<E, R, Spec> ScrollBlockExecutor<E, R, Spec>
 where
-    DB: Database + 'db,
     E: EvmExt<
-        DB = &'db mut State<DB>,
+        DB: StateDB,
         Tx: FromRecoveredTx<R::Transaction>
                 + FromTxWithEncoded<R::Transaction>
                 + FromTxWithCompressionInfo<R::Transaction>,
@@ -157,13 +159,9 @@ where
     }
 }
 
-impl<'db, DB, E, R, Spec> BlockExecutor for ScrollBlockExecutor<E, R, Spec>
+impl<E, R, Spec> BlockExecutor for ScrollBlockExecutor<E, R, Spec>
 where
-    DB: Database + 'db,
-    E: EvmExt<
-        DB = &'db mut State<DB>,
-        Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction>,
-    >,
+    E: EvmExt<DB: StateDB, Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction>>,
     R: ScrollReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
     Spec: ScrollHardforks + ChainConfig<Config = ScrollChainConfig>,
 {
@@ -173,18 +171,6 @@ where
     type Result = ScrollTxResult<<E as Evm>::HaltReason>;
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
-        // set state clear flag if the block is after the Spurious Dragon hardfork.
-        let state_clear_flag =
-            self.spec.is_spurious_dragon_active_at_block(self.evm.block().number().to());
-        self.evm.db_mut().set_state_clear_flag(state_clear_flag);
-
-        // load the l1 gas oracle contract in cache.
-        let _ = self
-            .evm
-            .db_mut()
-            .load_cache_account(L1_GAS_PRICE_ORACLE_ADDRESS)
-            .map_err(BlockExecutionError::other)?;
-
         // apply gas oracle predeploy upgrade at Curie transition block.
         #[allow(clippy::collapsible_if)]
         if self
@@ -467,12 +453,12 @@ where
 
     fn create_executor<'a, DB, I>(
         &'a self,
-        evm: <Self::EvmFactory as EvmFactory>::Evm<&'a mut State<DB>, I>,
+        evm: <Self::EvmFactory as EvmFactory>::Evm<DB, I>,
         ctx: Self::ExecutionCtx<'a>,
     ) -> impl BlockExecutorFor<'a, Self, DB, I>
     where
-        DB: Database + 'a,
-        I: Inspector<<Self::EvmFactory as EvmFactory>::Context<&'a mut State<DB>>> + 'a,
+        DB: StateDB + 'a,
+        I: Inspector<<Self::EvmFactory as EvmFactory>::Context<DB>> + 'a,
     {
         ScrollBlockExecutor::new(evm, ctx, self.spec.clone(), &self.receipt_builder)
     }

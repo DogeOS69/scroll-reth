@@ -4,10 +4,10 @@ use core::{
     pin::Pin,
     task::{Context, Poll},
 };
-use reth_payload_builder::{KeepPayloadJobAlive, PayloadJob, PayloadJobGenerator};
-use reth_payload_primitives::{
-    BuiltPayload, PayloadBuilderAttributes, PayloadBuilderError, PayloadKind,
+use reth_payload_builder::{
+    BuildNewPayload, KeepPayloadJobAlive, PayloadId, PayloadJob, PayloadJobGenerator,
 };
+use reth_payload_primitives::{BuiltPayload, PayloadAttributes, PayloadBuilderError, PayloadKind};
 
 /// A [`PayloadJobGenerator`] that doesn't produce any useful payload.
 #[derive(Debug, Default)]
@@ -18,12 +18,16 @@ pub struct NoopPayloadJobGenerator<PA, BP> {
 
 impl<PA, BP> PayloadJobGenerator for NoopPayloadJobGenerator<PA, BP>
 where
-    PA: PayloadBuilderAttributes + Default + Debug + Send + Sync,
+    PA: PayloadAttributes + Default + Debug + Send + Sync,
     BP: BuiltPayload + Default + Clone + Debug + Send + Sync + 'static,
 {
     type Job = NoopPayloadJob<PA, BP>;
 
-    fn new_payload_job(&self, _attr: PA) -> Result<Self::Job, PayloadBuilderError> {
+    fn new_payload_job(
+        &self,
+        _input: BuildNewPayload<PA>,
+        _id: PayloadId,
+    ) -> Result<Self::Job, PayloadBuilderError> {
         Ok(NoopPayloadJob::<PA, BP>::default())
     }
 }
@@ -44,7 +48,7 @@ impl<PA, BP> Future for NoopPayloadJob<PA, BP> {
 
 impl<PA, BP> PayloadJob for NoopPayloadJob<PA, BP>
 where
-    PA: PayloadBuilderAttributes + Default + Debug,
+    PA: PayloadAttributes + Default + Debug,
     BP: BuiltPayload + Default + Clone + Debug + 'static,
 {
     type PayloadAttributes = PA;

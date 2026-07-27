@@ -10,6 +10,10 @@ ignore = [
     "RUSTSEC-2024-0436",
     # https://rustsec.org/advisories/RUSTSEC-2025-0141 bincode is unmaintained, need to transition all deps to wincode first
     "RUSTSEC-2025-0141",
+    # https://rustsec.org/advisories/RUSTSEC-2023-0089 atomic-polyfill is unmaintained, transitive dep via test-fuzz
+    "RUSTSEC-2023-0089",
+    # https://rustsec.org/advisories/RUSTSEC-2026-0002 lru upgrade requires a discv5 bump first
+    "RUSTSEC-2026-0002",
 ]
 
 # This section is considered when running `cargo deny check bans`.
@@ -57,17 +61,11 @@ allow = [
     # Scroll-internal crates without public license
     "LicenseRef-scroll-internal",
     "CDLA-Permissive-2.0",
-    "MPL-2.0",
 ]
 
 # Allow 1 or more licenses on a per-crate basis, so that particular licenses
 # aren't accepted for every possible crate as with the normal allow list
-exceptions = [
-    # TODO: decide on MPL-2.0 handling
-    # These dependencies are grandfathered in https://github.com/paradigmxyz/reth/pull/6980
-    { allow = ["MPL-2.0"], name = "option-ext" },
-    { allow = ["MPL-2.0"], name = "webpki-root-certs" },
-]
+exceptions = []
 
 [[licenses.clarify]]
 name = "rustls-webpki"
@@ -90,8 +88,9 @@ unknown-registry = "warn"
 # Lint level for what to happen when a crate from a git repository that is not
 # in the allow list is encountered
 unknown-git = "deny"
+unused-allowed-source = "allow"
+# Frequently patched dependencies
 allow-git = [
-    # TODO: Please avoid adding new entries to this list.
     "https://github.com/alloy-rs/alloy",
     "https://github.com/foundry-rs/block-explorers",
     "https://github.com/bluealloy/revm",
@@ -102,4 +101,5 @@ allow-git = [
     # Scroll-specific git dependencies
     "https://github.com/scroll-tech/da-codec",
     "https://github.com/DogeOS69/dogeos-revm",
+    "https://github.com/DaniPopes/slotmap.git",
 ]

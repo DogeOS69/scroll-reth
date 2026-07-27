@@ -43,7 +43,6 @@ impl<
     type ExecutionData = T::ExecutionData;
     type BuiltPayload = T::BuiltPayload;
     type PayloadAttributes = T::PayloadAttributes;
-    type PayloadBuilderAttributes = T::PayloadBuilderAttributes;
 
     fn block_to_payload(
         block: SealedBlock<
@@ -82,7 +81,6 @@ impl PayloadTypes for ScrollPayloadTypes {
     type ExecutionData = ExecutionData;
     type BuiltPayload = ScrollBuiltPayload;
     type PayloadAttributes = ScrollPayloadAttributes;
-    type PayloadBuilderAttributes = ScrollPayloadBuilderAttributes;
 
     fn block_to_payload(
         block: SealedBlock<

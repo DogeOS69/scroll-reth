@@ -82,8 +82,7 @@ mod tests {
         db.accounts.insert(L2_MESSAGE_QUEUE_ADDRESS, Default::default());
         db.storage.insert((L2_MESSAGE_QUEUE_ADDRESS, U256::ZERO), withdraw_root);
 
-        let mut state =
-            State::builder().with_database(db).with_bundle_update().without_state_clear().build();
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
 
         assert!(state
             .cache

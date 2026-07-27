@@ -144,7 +144,7 @@ mod tests {
     };
     use reth_scroll_node::ScrollEngineValidator;
     use reth_scroll_payload::NoopPayloadJobGenerator;
-    use reth_tasks::TokioTaskExecutor;
+    use reth_tasks::Runtime;
     use reth_transaction_pool::noop::NoopTransactionPool;
     use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
     use tokio::sync::mpsc::unbounded_channel;
@@ -152,7 +152,7 @@ mod tests {
     fn spawn_test_payload_service<T>() -> PayloadBuilderHandle<T>
     where
         T: PayloadTypes<
-                PayloadBuilderAttributes = ScrollPayloadBuilderAttributes,
+                PayloadAttributes = ScrollPayloadBuilderAttributes,
                 BuiltPayload = ScrollBuiltPayload,
             > + 'static,
     {
@@ -184,7 +184,7 @@ mod tests {
             beacon_engine_handle,
             spawn_test_payload_service().into(),
             NoopTransactionPool::default(),
-            Box::<TokioTaskExecutor>::default(),
+            Runtime::test(),
             client,
             EngineCapabilities::default(),
             ScrollEngineValidator::new(SCROLL_MAINNET.clone()),

@@ -289,6 +289,29 @@ mod tests {
     }
 
     #[test]
+    fn test_next_tsuki_sets_tx_gas_limit_cap() -> eyre::Result<()> {
+        let config = ScrollEvmConfig::<_, ScrollPrimitives, _>::new(
+            ScrollChainSpecBuilder::dogeos_mainnet()
+                .build(ScrollChainConfig::dogeos_mainnet())
+                .into(),
+            ScrollRethReceiptBuilder::default(),
+        );
+        let attributes = ScrollNextBlockEnvAttributes {
+            timestamp: 1,
+            suggested_fee_recipient: Address::random(),
+            gas_limit: 10_000_000,
+            base_fee: 0,
+        };
+
+        let env = config.next_evm_env(&Header::default(), &attributes)?;
+
+        assert_eq!(env.cfg_env.spec, ScrollSpecId::TSUKI);
+        assert_eq!(env.cfg_env.tx_gas_limit_cap, Some(eip7825::TX_GAS_LIMIT_CAP));
+
+        Ok(())
+    }
+
+    #[test]
     fn test_pre_tsuki_leaves_tx_gas_limit_uncapped() -> eyre::Result<()> {
         let config = ScrollEvmConfig::<_, ScrollPrimitives, _>::new(
             ScrollChainSpecBuilder::scroll_mainnet()

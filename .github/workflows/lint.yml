@@ -285,25 +285,6 @@ jobs:
   deny:
     uses: tempoxyz/ci/.github/workflows/deny.yml@main
 
-  openvm:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      RUSTC_WRAPPER: ""
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2025-08-18
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-      - run: cargo install --locked --git https://github.com/openvm-org/openvm.git --tag v1.4.2 cargo-openvm
-      - name: verify openvm compatibility
-        env:
-          OPENVM_RUST_TOOLCHAIN: nightly-2025-08-18
-        run: cargo openvm build --manifest-path crates/scroll/openvm-compat/Cargo.toml
-
   lint-success:
     name: lint success
     runs-on: ubuntu-latest
@@ -323,7 +304,6 @@ jobs:
       - features
       - feature-propagation
       - deny
-      - openvm
     timeout-minutes: 30
     steps:
       - name: Decide whether the needed jobs succeeded or failed

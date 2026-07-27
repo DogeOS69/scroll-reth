@@ -38,7 +38,7 @@ use revm::{
     Context, ExecuteEvm, InspectEvm, Inspector, SystemCallEvm,
 };
 use revm_scroll::{
-    builder::{DefaultScrollContext, ScrollBuilder, ScrollContext},
+    builder::{DefaultScrollContext, ScrollBuilder, ScrollCfgExt, ScrollContext},
     instructions::ScrollInstructions,
     precompile::ScrollPrecompileProvider,
     ScrollSpecId,
@@ -215,12 +215,17 @@ impl<P: ScrollPrecompilesFactory> EvmFactory for ScrollEvmFactory<P> {
         db: DB,
         input: EvmEnv<ScrollSpecId>,
     ) -> Self::Evm<DB, NoOpInspector> {
-        let spec_id = input.cfg_env.spec;
+        let mut cfg_env = input.cfg_env;
+        let spec_id = cfg_env.spec;
+        // `EvmEnv` can be constructed outside `ScrollEvmConfig`. Normalize the configuration at
+        // the factory boundary so direct callers receive the gas parameters and transaction limits
+        // associated with the requested Scroll fork as well.
+        cfg_env.set_scroll_spec(spec_id);
         ScrollEvm {
             inner: Context::scroll()
                 .with_db(db)
                 .with_block(input.block_env)
-                .with_cfg(input.cfg_env)
+                .with_cfg(cfg_env)
                 .build_scroll_with_inspector(NoOpInspector {})
                 .with_precompiles(P::with_spec(spec_id)),
             inspect: false,
@@ -233,12 +238,15 @@ impl<P: ScrollPrecompilesFactory> EvmFactory for ScrollEvmFactory<P> {
         input: EvmEnv<ScrollSpecId>,
         inspector: I,
     ) -> Self::Evm<DB, I> {
-        let spec_id = input.cfg_env.spec;
+        let mut cfg_env = input.cfg_env;
+        let spec_id = cfg_env.spec;
+        // Keep the inspected construction path semantically identical to `create_evm`.
+        cfg_env.set_scroll_spec(spec_id);
         ScrollEvm {
             inner: Context::scroll()
                 .with_db(db)
                 .with_block(input.block_env)
-                .with_cfg(input.cfg_env)
+                .with_cfg(cfg_env)
                 .build_scroll_with_inspector(inspector)
                 .with_precompiles(P::with_spec(spec_id)),
             inspect: true,
@@ -259,5 +267,22 @@ pub struct ScrollDefaultPrecompilesFactory;
 impl ScrollPrecompilesFactory for ScrollDefaultPrecompilesFactory {
     fn with_spec(spec_id: ScrollSpecId) -> PrecompilesMap {
         ScrollPrecompileProvider::new_with_spec(spec_id).into_precompiles_map()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use revm::{context::CfgEnv, database::EmptyDB, primitives::eip7825};
+
+    #[test]
+    fn factory_normalizes_directly_constructed_scroll_cfg() {
+        let evm = ScrollEvmFactory::<ScrollDefaultPrecompilesFactory>::default().create_evm(
+            EmptyDB::default(),
+            EvmEnv::new(CfgEnv::new_with_spec(ScrollSpecId::TSUKI), BlockEnv::default()),
+        );
+
+        assert_eq!(evm.ctx().cfg.tx_gas_limit_cap, Some(eip7825::TX_GAS_LIMIT_CAP));
+        assert_eq!(evm.ctx().cfg.gas_params.tx_floor_cost_per_token(), 10);
     }
 }

@@ -2,7 +2,7 @@ FROM ubuntu:24.04 AS cross-base
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Use HTTPS for package sources
-RUN apt-get update && apt-get install --assume-yes --no-install-recommends ca-certificates
+RUN apt-get update && apt-get install --assume-yes --no-install-recommends ca-certificates=20260816ubuntu0.24.04.1
 RUN find /etc/apt/ -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i 's|http://|https://|g' {} +
 
 # Configure APT retries and timeouts to handle network issues
